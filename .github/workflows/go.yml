@@ -94,7 +94,7 @@ jobs:
       - name: Install, launch, and extract a controlled page
         shell: bash
         env:
-          KG2BB_TEST_BROWSER_ARCHIVE: .browser-cache/${{ matrix.archive }}
+          KG2BB_TEST_BROWSER_ARCHIVE: ${{ github.workspace }}/.browser-cache/${{ matrix.archive }}
         run: go test -count=1 -tags=browser_install ./internal/browser -run TestPinnedArchiveInstallLaunchAndExtraction -v
 
   release:
