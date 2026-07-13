@@ -1,0 +1,14 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "bvid": "BV1fixture",
+    "aid": 101,
+    "title": "Fixture Song",
+    "duration": 185,
+    "desc": "fixture description",
+    "owner": {"name": "Fixture UP"},
+    "stat": {"view": 1200, "favorite": 88, "danmaku": 12},
+    "is_cooperation": true
+  }
+}

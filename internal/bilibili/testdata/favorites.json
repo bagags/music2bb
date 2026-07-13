@@ -1,0 +1,9 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "list": [
+      {"id": 765, "title": "Fixture Favorites", "media_count": 2}
+    ]
+  }
+}

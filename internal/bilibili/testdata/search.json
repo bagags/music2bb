@@ -1,0 +1,26 @@
+{
+  "code": 0,
+  "message": "0",
+  "data": {
+    "result": [
+      {
+        "result_type": "video",
+        "data": [
+          {
+            "bvid": "BV1fixture",
+            "aid": 101,
+            "title": "<em class=\"keyword\">Fixture</em> Song",
+            "author": "Official Fixture",
+            "duration": "03:05",
+            "play": "1200",
+            "favorites": 88,
+            "video_review": 12,
+            "description": "fixture description",
+            "tag": "音乐,无损",
+            "owner": {"verify_type": 1}
+          }
+        ]
+      }
+    ]
+  }
+}
