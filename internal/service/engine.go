@@ -58,7 +58,7 @@ func (e *Engine) ParsePlaylist(ctx context.Context, rawURL string, opts ParseOpt
 		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "parse playlist", Message: "playlist URL is required"}
 	}
 	updates := serial(observer, e.now)
-	updates.emit(ProgressEvent{Kind: EventProgress, Operation: "parse_playlist", Message: "正在解析酷狗歌单"})
+	updates.emit(ProgressEvent{Kind: EventProgress, Operation: "parse_playlist", Message: "正在解析歌单"})
 	result, err := e.playlist.ParsePlaylist(ctx, rawURL, opts.BrowserPolicy)
 	if err != nil {
 		return nil, classifyContext("parse playlist", ErrorExtraction, err)

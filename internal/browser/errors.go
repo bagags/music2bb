@@ -1,6 +1,9 @@
 package browser
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrorKind is a stable, machine-readable browser failure category.
 type ErrorKind string
@@ -40,15 +43,19 @@ func (e *Error) Unwrap() error { return e.Err }
 
 // IsKind reports whether err contains a browser Error with the requested kind.
 func IsKind(err error, kind ErrorKind) bool {
-	for err != nil {
-		if typed, ok := err.(*Error); ok {
-			if typed.Kind == kind {
+	if err == nil {
+		return false
+	}
+	if typed, ok := err.(*Error); ok {
+		return typed.Kind == kind || IsKind(typed.Err, kind)
+	}
+	if joined, ok := err.(interface{ Unwrap() []error }); ok {
+		for _, nested := range joined.Unwrap() {
+			if IsKind(nested, kind) {
 				return true
 			}
-			err = typed.Err
-			continue
 		}
-		break
+		return false
 	}
-	return false
+	return IsKind(errors.Unwrap(err), kind)
 }

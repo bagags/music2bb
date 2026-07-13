@@ -143,6 +143,7 @@ func TestInjectedBrowserStorageClockHTTPAndLimiter(t *testing.T) {
 		return []Song{{Name: "Injected Song", Artist: "Artist"}}, nil
 	})
 	engine := newTestEngine(t, nil, WithRateLimiter(limiter), WithBrowserExtractor(extractor))
+	loginForTest(t, engine)
 	songs, err := engine.ParsePlaylistWithOptions(context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAuto}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -159,6 +160,170 @@ type BrowserExtractorFunc func(context.Context, string) ([]Song, error)
 
 func (f BrowserExtractorFunc) Extract(ctx context.Context, rawURL string) ([]Song, error) {
 	return f(ctx, rawURL)
+}
+
+func TestUnknownProviderUsesInjectedBrowser(t *testing.T) {
+	var calls atomic.Int32
+	var extractedURL string
+	extractor := BrowserExtractorFunc(func(_ context.Context, rawURL string) ([]Song, error) {
+		calls.Add(1)
+		extractedURL = rawURL
+		return []Song{{
+			Name: "Injected Song", Artist: "Artist", Album: "Album", Duration: "3:05", Hash: "hash",
+		}}, nil
+	})
+	engine := newTestEngine(t, nil, WithBrowserExtractor(extractor))
+
+	songs, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls.Load() != 1 || extractedURL != "https://example.test/playlist" {
+		t.Fatalf("injected calls = %d, URL = %q", calls.Load(), extractedURL)
+	}
+	if len(songs) != 1 || songs[0] != (Song{
+		Name: "Injected Song", Artist: "Artist", Album: "Album", Duration: "3:05", Hash: "hash",
+	}) {
+		t.Fatalf("songs = %#v", songs)
+	}
+}
+
+func TestUnknownProviderAutoWithoutBrowserReturnsBrowserError(t *testing.T) {
+	engine := newTestEngine(t, nil)
+	_, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+	)
+	if CategoryOf(err) != ErrorBrowser {
+		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorBrowser, err)
+	}
+}
+
+func TestUnknownProviderAlwaysWithoutBrowserReturnsBrowserError(t *testing.T) {
+	engine := newTestEngine(t, nil)
+	_, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAlways}, nil,
+	)
+	if CategoryOf(err) != ErrorBrowser {
+		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorBrowser, err)
+	}
+}
+
+func TestFailedKugouAutoWithoutBrowserRemainsExtractionError(t *testing.T) {
+	engine := newTestEngine(t, nil)
+	_, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://www.kugou.com/share?specialid=42", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+	)
+	if CategoryOf(err) != ErrorExtraction {
+		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorExtraction, err)
+	}
+}
+
+func TestUnknownProviderNeverReturnsExtractionWithoutCallingBrowser(t *testing.T) {
+	var calls atomic.Int32
+	extractor := BrowserExtractorFunc(func(context.Context, string) ([]Song, error) {
+		calls.Add(1)
+		return []Song{{Name: "must not be used"}}, nil
+	})
+	engine := newTestEngine(t, nil, WithBrowserExtractor(extractor))
+
+	_, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserNever}, nil,
+	)
+	if CategoryOf(err) != ErrorExtraction {
+		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorExtraction, err)
+	}
+	if calls.Load() != 0 {
+		t.Fatalf("injected browser calls = %d, want 0", calls.Load())
+	}
+}
+
+func TestInjectedBrowserFailureReturnsExtractionError(t *testing.T) {
+	cause := errors.New("injected extraction failed")
+	extractor := BrowserExtractorFunc(func(context.Context, string) ([]Song, error) {
+		return nil, cause
+	})
+	engine := newTestEngine(t, nil, WithBrowserExtractor(extractor))
+
+	_, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+	)
+	if CategoryOf(err) != ErrorExtraction {
+		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorExtraction, err)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatalf("error %v does not contain injected cause", err)
+	}
+}
+
+func TestInjectedBrowserPartialSongSurvivesNonContextError(t *testing.T) {
+	cause := errors.New("late injected failure")
+	extractor := BrowserExtractorFunc(func(context.Context, string) ([]Song, error) {
+		return []Song{{Name: "Useful Partial", Artist: "Artist"}}, cause
+	})
+	engine := newTestEngine(t, nil, WithBrowserExtractor(extractor))
+
+	songs, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+	)
+	if err != nil {
+		t.Fatalf("partial extraction returned error: %v", err)
+	}
+	if len(songs) != 1 || songs[0].Name != "Useful Partial" || songs[0].Artist != "Artist" {
+		t.Fatalf("songs = %#v", songs)
+	}
+}
+
+func TestInjectedBrowserCancellationWinsOverPartialSong(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	extractor := BrowserExtractorFunc(func(context.Context, string) ([]Song, error) {
+		cancel()
+		return []Song{{Name: "Discarded Partial"}}, errors.New("late injected failure")
+	})
+	engine := newTestEngine(t, nil, WithBrowserExtractor(extractor))
+
+	songs, err := engine.ParsePlaylistWithOptions(
+		ctx, "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+	)
+	if CategoryOf(err) != ErrorCancelled {
+		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorCancelled, err)
+	}
+	if len(songs) != 0 {
+		t.Fatalf("cancelled extraction returned songs: %#v", songs)
+	}
+}
+
+func TestCompleteKugouEmbeddedExtractionSkipsInjectedBrowser(t *testing.T) {
+	var browserCalls atomic.Int32
+	extractor := BrowserExtractorFunc(func(context.Context, string) ([]Song, error) {
+		browserCalls.Add(1)
+		return []Song{{Name: "must not be used"}}, nil
+	})
+	kugouHTTP := &http.Client{Transport: roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.Hostname() == "www.kugou.com" && request.URL.Path == "/share" {
+			return jsonResponse(`<html><script>var songData = [{"songname":"Embedded Song","singername":"Embedded Artist"}];</script></html>`), nil
+		}
+		return jsonResponse(`{"data":{"info":[]}}`), nil
+	})}
+	engine := newTestEngine(t, nil,
+		WithHTTPClients(HTTPClients{Kugou: kugouHTTP}),
+		WithBrowserExtractor(extractor),
+	)
+
+	songs, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://www.kugou.com/share?specialid=42", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(songs) != 1 || songs[0].Name != "Embedded Song" || songs[0].Artist != "Embedded Artist" {
+		t.Fatalf("songs = %#v", songs)
+	}
+	if browserCalls.Load() != 0 {
+		t.Fatalf("injected browser calls = %d, want 0", browserCalls.Load())
+	}
 }
 
 func TestMatchPreservesOrderAndSerializesObserver(t *testing.T) {
@@ -219,6 +384,10 @@ func TestInvalidInputUsesMachineReadableCategory(t *testing.T) {
 	_, err := engine.ParsePlaylist(context.Background(), "not a URL", nil)
 	if CategoryOf(err) != ErrorInvalidInput {
 		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorInvalidInput, err)
+	}
+	_, err = engine.ParsePlaylistWithOptions(context.Background(), "https://example.test/list", ParseOptions{BrowserPolicy: BrowserPolicy("sometimes")}, nil)
+	if CategoryOf(err) != ErrorInvalidInput {
+		t.Fatalf("invalid policy category = %q, want %q (err=%v)", CategoryOf(err), ErrorInvalidInput, err)
 	}
 }
 

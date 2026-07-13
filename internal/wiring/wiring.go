@@ -16,6 +16,7 @@ import (
 	"github.com/gguage/music-to-bb/internal/matcher"
 	"github.com/gguage/music-to-bb/internal/model"
 	"github.com/gguage/music-to-bb/internal/netx"
+	"github.com/gguage/music-to-bb/internal/playlist"
 	"github.com/gguage/music-to-bb/internal/service"
 )
 
@@ -32,7 +33,7 @@ type Options struct {
 	Sleep            netx.Sleeper
 	CookieStore      bilibili.CookieStore
 	BrowserManager   *browser.Manager
-	BrowserExtractor kugou.Extractor
+	BrowserExtractor playlist.BrowserExtractor
 }
 
 type Components struct {
@@ -79,13 +80,28 @@ func New(options Options) (*Components, error) {
 	if options.KugouHTTP != nil {
 		kugouHTTP.HTTP = options.KugouHTTP
 	}
-	directKugou := kugou.New(kugouHTTP, nil)
+	directKugou := kugou.New(kugouHTTP)
 	extractor := options.BrowserExtractor
-	externalBrowser := extractor != nil
 	if extractor == nil {
 		extractor = browser.NewExtractor(manager)
 	}
-	browserKugou := kugou.New(kugouHTTP, extractor)
+	identification, err := playlist.NewIdentificationRegistry(playlist.IdentificationRegistration{
+		ProviderID: kugou.ProviderID,
+		Identifier: kugou.Identifier(),
+	})
+	if err != nil {
+		kugouHTTP.CloseIdleConnections()
+		return nil, err
+	}
+	optimizations, err := playlist.NewOptimizationRegistry(playlist.OptimizationRegistration{
+		ProviderID:    kugou.ProviderID,
+		Optimizations: kugou.Optimizations(directKugou),
+	})
+	if err != nil {
+		kugouHTTP.CloseIdleConnections()
+		return nil, err
+	}
+	coordinator := playlist.NewCoordinator(identification, optimizations, extractor)
 	bili, err := bilibili.New(bilibili.Config{
 		CookieFile:    state.CookieFile,
 		CookieStore:   options.CookieStore,
@@ -108,7 +124,7 @@ func New(options Options) (*Components, error) {
 	})
 	adapter := &bilibiliAdapter{client: bili}
 	engine, err := service.New(service.Dependencies{
-		Playlist: &playlistAdapter{direct: directKugou, browser: browserKugou, manager: manager, externalBrowser: externalBrowser},
+		Playlist: &playlistAdapter{coordinator: coordinator},
 		Match:    adapter,
 		Account:  adapter,
 		Matcher:  scorer,
@@ -139,43 +155,25 @@ func cloneConfig(source config.Config) config.Config {
 }
 
 type playlistAdapter struct {
-	direct          *kugou.Client
-	browser         *kugou.Client
-	manager         *browser.Manager
-	externalBrowser bool
+	coordinator *playlist.Coordinator
 }
 
 func (a *playlistAdapter) ParsePlaylist(ctx context.Context, rawURL string, policy service.BrowserPolicy) (service.PlaylistResult, error) {
-	client := a.direct
-	switch policy {
-	case "", service.BrowserAuto:
-		if a.externalBrowser {
-			client = a.browser
-		} else if status, err := a.manager.Status(ctx); err == nil && status.Installed {
-			client = a.browser
-		}
-	case service.BrowserNever:
-	case service.BrowserAlways:
-		if a.externalBrowser {
-			client = a.browser
-			break
-		}
-		status, err := a.manager.Status(ctx)
-		if err != nil {
-			return service.PlaylistResult{}, &service.OperationError{Category: service.ErrorBrowser, Operation: "browser status", Err: err}
-		}
-		if !status.Installed {
-			return service.PlaylistResult{}, &service.OperationError{Category: service.ErrorBrowser, Operation: "parse playlist", Message: "verified browser is not installed"}
-		}
-		client = a.browser
-	default:
-		return service.PlaylistResult{}, &service.OperationError{Category: service.ErrorInvalidInput, Operation: "parse playlist", Message: "invalid browser policy"}
+	result, err := a.coordinator.ParsePlaylist(ctx, rawURL, playlist.BrowserPolicy(policy))
+	converted := service.PlaylistResult{Songs: result.Songs, ExpectedTotal: result.ExpectedTotal}
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return converted, err
 	}
-	result, err := client.ParsePlaylistResult(ctx, rawURL)
-	if kugou.IsKind(err, kugou.ErrorInvalidURL) {
-		return service.PlaylistResult{}, &service.OperationError{Category: service.ErrorInvalidInput, Operation: "parse playlist", Err: err}
+	category := service.ErrorExtraction
+	switch {
+	case playlist.IsKind(err, playlist.ErrorInvalidInput):
+		category = service.ErrorInvalidInput
+	case playlist.IsKind(err, playlist.ErrorBrowser), browser.IsKind(err, browser.ErrorNotInstalled):
+		category = service.ErrorBrowser
+	case playlist.IsKind(err, playlist.ErrorInternal):
+		category = service.ErrorInternal
 	}
-	return service.PlaylistResult{Songs: result.Songs, ExpectedTotal: result.ExpectedTotal}, err
+	return converted, &service.OperationError{Category: category, Operation: "parse playlist", Err: err}
 }
 
 type bilibiliAdapter struct {

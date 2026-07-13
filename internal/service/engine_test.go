@@ -216,9 +216,13 @@ func TestParsePlaylistWarnsAndContinuesWhenIncomplete(t *testing.T) {
 	if err != nil || len(songs) != 1 {
 		t.Fatalf("ParsePlaylist = %#v, %v", songs, err)
 	}
+	if len(events) == 0 || events[0].Kind != EventProgress || events[0].Operation != "parse_playlist" || events[0].Message != "正在解析歌单" {
+		t.Fatalf("initial parse event = %#v", events)
+	}
 	found := false
 	for _, event := range events {
-		if event.Kind == EventWarning && event.Current == 1 && event.Total == 109 {
+		if event.Kind == EventWarning && event.Operation == "parse_playlist" && event.Current == 1 && event.Total == 109 &&
+			event.Message == "警告：歌单抓取不完整，实际 1 / 预期 109 首；将继续处理已获取歌曲" {
 			found = true
 		}
 	}

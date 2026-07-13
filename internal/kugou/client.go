@@ -1,5 +1,4 @@
-// Package kugou extracts playlist songs through direct HTTP APIs, embedded
-// page JSON, and an explicitly injected browser fallback in that order.
+// Package kugou implements Kugou-specific playlist extraction optimizations.
 package kugou
 
 import (
@@ -17,6 +16,7 @@ import (
 
 	"github.com/gguage/music-to-bb/internal/model"
 	"github.com/gguage/music-to-bb/internal/netx"
+	"github.com/gguage/music-to-bb/internal/playlist"
 )
 
 const maxResponseBytes int64 = 16 << 20
@@ -28,12 +28,6 @@ const (
 	h5SignatureSalt    = "NVPh5oo715z5DIWAeQlhMDsWXXQV4hwt"
 	collectionPageSize = 100
 )
-
-// Extractor is the narrow browser fallback contract. Implementations must not
-// prompt or auto-install a browser inside Extract.
-type Extractor interface {
-	Extract(context.Context, string) ([]model.Song, error)
-}
 
 type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
@@ -78,25 +72,25 @@ type ParseResult struct {
 
 type Client struct {
 	http               HTTPDoer
-	browser            Extractor
 	endpoints          []APIEndpoint
 	collectionEndpoint string
 	now                func() time.Time
 }
 
-func New(httpClient *netx.Client, browser Extractor, options ...Option) *Client {
+func New(httpClient *netx.Client, options ...Option) *Client {
 	if httpClient == nil {
 		httpClient = netx.New(15*time.Second, 8, nil)
 	}
 	client := &Client{
 		http:               httpClient,
-		browser:            browser,
 		endpoints:          defaultAPIEndpoints(),
 		collectionEndpoint: collectionEndpoint,
 		now:                time.Now,
 	}
 	for _, option := range options {
-		option(client)
+		if option != nil {
+			option(client)
+		}
 	}
 	return client
 }
@@ -117,20 +111,29 @@ func (c *Client) ParsePlaylist(ctx context.Context, rawURL string) ([]model.Song
 	return result.Songs, err
 }
 
-// ParsePlaylistResult tries all direct sources before the browser fallback and
-// returns partial songs without a fatal error when Kugou declares a larger
-// total than could be retrieved.
+// ParsePlaylistResult is a compatibility helper that decodes the client's raw
+// provider result using the same title and cleanup optimizations registered by
+// production wiring.
 func (c *Client) ParsePlaylistResult(ctx context.Context, rawURL string) (ParseResult, error) {
-	parsed, err := url.Parse(strings.TrimSpace(rawURL))
-	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
-		if err == nil {
-			err = errors.New("URL must use http or https and include a host")
-		}
+	source, err := playlist.ParseSource(rawURL)
+	if err != nil {
 		return ParseResult{}, &Error{Kind: ErrorInvalidURL, Op: "parse URL", Err: err}
 	}
+	raw, err := c.ExtractPlaylist(ctx, source)
+	return ParseResult{Songs: decodeAndNormalize(raw.Tracks), ExpectedTotal: raw.ExpectedTotal}, err
+}
+
+// Name identifies this optimization in internal diagnostics.
+func (c *Client) Name() string { return "kugou-playlist" }
+
+// ExtractPlaylist tries Kugou's direct API and embedded-page strategies. It is
+// intentionally browser-free; the neutral playlist coordinator owns generic
+// browser fallback and cross-source merging.
+func (c *Client) ExtractPlaylist(ctx context.Context, source playlist.Source) (playlist.RawResult, error) {
+	parsed := source.URL()
 
 	var failures []error
-	best := ParseResult{}
+	best := playlist.RawResult{}
 	pageHTML, finalURL, fetchErr := c.fetch(ctx, parsed.String())
 	if fetchErr == nil {
 		identity := playlistIdentity(finalURL)
@@ -138,54 +141,49 @@ func (c *Client) ParsePlaylistResult(ctx context.Context, rawURL string) (ParseR
 			identity = playlistIdentity(parsed.String())
 		}
 		if identity.ID != "" {
-			var result ParseResult
+			var result playlist.RawResult
 			var apiErr error
 			if identity.Collection {
 				result, apiErr = c.fetchCollection(ctx, identity.ID)
-				if len(result.Songs) == 0 {
+				if resultSongCount(result) == 0 {
 					fallback, fallbackErr := c.fetchAPI(ctx, identity.ID)
-					result = betterResult(result, fallback)
+					result = betterRawResult(result, fallback)
 					apiErr = errors.Join(apiErr, fallbackErr)
 				}
 			} else {
 				result, apiErr = c.fetchAPI(ctx, identity.ID)
 			}
-			result.Songs = CleanupSongs(result.Songs)
-			best = betterResult(best, result)
+			if apiErr != nil && (errors.Is(apiErr, context.Canceled) || errors.Is(apiErr, context.DeadlineExceeded)) {
+				return playlist.RawResult{}, contextCause(ctx, apiErr)
+			}
+			best = betterRawResult(best, result)
 			if apiErr != nil {
 				failures = append(failures, apiErr)
 			}
 		}
-		if songs := ExtractEmbeddedSongs(pageHTML); len(songs) > 0 {
-			best = betterResult(best, ParseResult{Songs: CleanupSongs(songs)})
+		if tracks := ExtractEmbeddedTracks(pageHTML); len(tracks) > 0 {
+			best = betterRawResult(best, playlist.RawResult{Tracks: tracks})
 		}
 	} else {
 		if errors.Is(fetchErr, context.Canceled) || errors.Is(fetchErr, context.DeadlineExceeded) {
-			return ParseResult{}, contextCause(ctx, fetchErr)
+			return playlist.RawResult{}, contextCause(ctx, fetchErr)
 		}
 		failures = append(failures, fetchErr)
 	}
 
-	if c.browser != nil && (len(best.Songs) == 0 || best.ExpectedTotal > len(best.Songs)) {
-		songs, browserErr := c.browser.Extract(ctx, parsed.String())
-		if len(songs) > 0 {
-			best.Songs = mergeSongs(best.Songs, CleanupSongs(songs))
-		}
-		if browserErr != nil {
-			if errors.Is(browserErr, context.Canceled) || errors.Is(browserErr, context.DeadlineExceeded) {
-				return ParseResult{}, contextCause(ctx, browserErr)
-			}
-			failures = append(failures, browserErr)
-		}
+	if err := ctx.Err(); err != nil {
+		return playlist.RawResult{}, err
 	}
-	if len(best.Songs) > 0 {
+	if resultSongCount(best) > 0 {
 		return best, nil
 	}
 	if len(failures) == 0 {
-		failures = append(failures, errors.New("no direct, embedded, or browser extraction returned songs"))
+		failures = append(failures, errors.New("no direct or embedded extraction returned songs"))
 	}
-	return ParseResult{}, &Error{Kind: ErrorExtraction, Op: "parse playlist", Err: errors.Join(failures...)}
+	return playlist.RawResult{}, &Error{Kind: ErrorExtraction, Op: "extract playlist", Err: errors.Join(failures...)}
 }
+
+var _ playlist.PlaylistExtractor = (*Client)(nil)
 
 func contextCause(ctx context.Context, fallback error) error {
 	if err := ctx.Err(); err != nil {
@@ -238,18 +236,18 @@ func (c *Client) fetch(ctx context.Context, rawURL string) (string, string, erro
 	return string(payload), responseURL(resp, rawURL), nil
 }
 
-func (c *Client) fetchAPI(ctx context.Context, playlistID string) (ParseResult, error) {
+func (c *Client) fetchAPI(ctx context.Context, playlistID string) (playlist.RawResult, error) {
 	var failures []error
-	best := ParseResult{}
+	best := playlist.RawResult{}
 	for _, endpoint := range c.endpoints {
-		var result ParseResult
+		var result playlist.RawResult
 		var err error
 		if endpoint.Paginated {
 			result, err = c.fetchPaginatedAPI(ctx, endpoint, playlistID)
 		} else {
 			result, err = c.fetchAPIPage(ctx, endpoint, playlistID, 1, 200)
 		}
-		best = betterResult(best, result)
+		best = betterRawResult(best, result)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return best, contextCause(ctx, err)
@@ -257,18 +255,19 @@ func (c *Client) fetchAPI(ctx context.Context, playlistID string) (ParseResult, 
 			failures = append(failures, err)
 			continue
 		}
-		if len(result.Songs) > 0 && (result.ExpectedTotal == 0 || len(result.Songs) >= result.ExpectedTotal) {
+		count := resultSongCount(result)
+		if count > 0 && (result.ExpectedTotal == 0 || count >= result.ExpectedTotal) {
 			return result, nil
 		}
 	}
-	if len(best.Songs) > 0 {
+	if resultSongCount(best) > 0 {
 		return best, errors.Join(failures...)
 	}
-	return ParseResult{}, errors.Join(failures...)
+	return playlist.RawResult{}, errors.Join(failures...)
 }
 
-func (c *Client) fetchPaginatedAPI(ctx context.Context, endpoint APIEndpoint, playlistID string) (ParseResult, error) {
-	result := ParseResult{}
+func (c *Client) fetchPaginatedAPI(ctx context.Context, endpoint APIEndpoint, playlistID string) (playlist.RawResult, error) {
+	result := playlist.RawResult{}
 	for page := 1; ; page++ {
 		current, err := c.fetchAPIPage(ctx, endpoint, playlistID, page, 200)
 		if err != nil {
@@ -277,19 +276,20 @@ func (c *Client) fetchPaginatedAPI(ctx context.Context, endpoint APIEndpoint, pl
 		if current.ExpectedTotal > result.ExpectedTotal {
 			result.ExpectedTotal = current.ExpectedTotal
 		}
-		before := len(result.Songs)
-		result.Songs = mergeSongs(result.Songs, current.Songs)
-		if len(current.Songs) == 0 || len(result.Songs) == before || result.ExpectedTotal == 0 || len(result.Songs) >= result.ExpectedTotal {
+		before := len(result.Tracks)
+		result.Tracks = mergeTracks(result.Tracks, current.Tracks)
+		count := resultSongCount(result)
+		if len(current.Tracks) == 0 || len(result.Tracks) == before || result.ExpectedTotal == 0 || count >= result.ExpectedTotal {
 			return result, nil
 		}
 	}
 }
 
-func (c *Client) fetchAPIPage(ctx context.Context, endpoint APIEndpoint, playlistID string, page, pageSize int) (ParseResult, error) {
+func (c *Client) fetchAPIPage(ctx context.Context, endpoint APIEndpoint, playlistID string, page, pageSize int) (playlist.RawResult, error) {
 	rawURL := strings.ReplaceAll(endpoint.URL, "{playlist_id}", url.PathEscape(playlistID))
 	parsed, err := url.Parse(rawURL)
 	if err != nil {
-		return ParseResult{}, err
+		return playlist.RawResult{}, err
 	}
 	if endpoint.Parameters {
 		query := parsed.Query()
@@ -310,26 +310,26 @@ func (c *Client) fetchAPIPage(ctx context.Context, endpoint APIEndpoint, playlis
 	}
 	req, err := http.NewRequestWithContext(ctx, method, parsed.String(), body)
 	if err != nil {
-		return ParseResult{}, err
+		return playlist.RawResult{}, err
 	}
 	setRequestHeaders(req)
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return ParseResult{}, err
+		return playlist.RawResult{}, err
 	}
 	payload, readErr := readAPIResponse(resp)
 	if readErr != nil {
-		return ParseResult{}, readErr
+		return playlist.RawResult{}, readErr
 	}
 	result := decodeSongPage(payload)
-	if len(result.Songs) > 0 {
+	if len(result.Tracks) > 0 {
 		return result, nil
 	}
 	return result, fmt.Errorf("%s returned no songs", endpoint.URL)
 }
 
-func (c *Client) fetchCollection(ctx context.Context, collectionID string) (ParseResult, error) {
-	result := ParseResult{}
+func (c *Client) fetchCollection(ctx context.Context, collectionID string) (playlist.RawResult, error) {
+	result := playlist.RawResult{}
 	for page := 1; ; page++ {
 		params := collectionParams(collectionID, page, collectionPageSize, c.now())
 		parsed, err := url.Parse(c.collectionEndpoint)
@@ -354,15 +354,16 @@ func (c *Client) fetchCollection(ctx context.Context, collectionID string) (Pars
 		if current.ExpectedTotal > result.ExpectedTotal {
 			result.ExpectedTotal = current.ExpectedTotal
 		}
-		before := len(result.Songs)
-		result.Songs = mergeSongs(result.Songs, current.Songs)
-		if len(current.Songs) == 0 {
-			if len(result.Songs) == 0 {
+		before := len(result.Tracks)
+		result.Tracks = mergeTracks(result.Tracks, current.Tracks)
+		count := resultSongCount(result)
+		if len(current.Tracks) == 0 {
+			if len(result.Tracks) == 0 {
 				return result, errors.New("collection endpoint returned no songs")
 			}
 			return result, nil
 		}
-		if len(result.Songs) == before || result.ExpectedTotal == 0 || len(result.Songs) >= result.ExpectedTotal {
+		if len(result.Tracks) == before || result.ExpectedTotal == 0 || count >= result.ExpectedTotal {
 			return result, nil
 		}
 	}
@@ -403,9 +404,9 @@ func collectionParams(collectionID string, page, pageSize int, now time.Time) ur
 	return params
 }
 
-func betterResult(left, right ParseResult) ParseResult {
+func betterRawResult(left, right playlist.RawResult) playlist.RawResult {
 	expected := max(left.ExpectedTotal, right.ExpectedTotal)
-	if len(right.Songs) > len(left.Songs) {
+	if resultSongCount(right) > resultSongCount(left) {
 		right.ExpectedTotal = expected
 		return right
 	}
@@ -413,15 +414,32 @@ func betterResult(left, right ParseResult) ParseResult {
 	return left
 }
 
-func mergeSongs(existing, additional []model.Song) []model.Song {
-	merged := append([]model.Song(nil), existing...)
+func resultSongCount(result playlist.RawResult) int {
+	return len(decodeAndNormalize(result.Tracks))
+}
+
+func decodeAndNormalize(tracks []playlist.TrackCandidate) []model.Song {
+	return CleanupSongs(playlist.DecodeTracks(tracks, []playlist.TitleExtractor{NewTitleExtractor()}))
+}
+
+func mergeTracks(existing, additional []playlist.TrackCandidate) []playlist.TrackCandidate {
+	merged := make([]playlist.TrackCandidate, 0, len(existing)+len(additional))
 	seen := make(map[string]struct{}, len(existing)+len(additional))
 	seenNames := make(map[string]struct{}, len(existing)+len(additional))
-	for _, song := range existing {
+	for _, candidate := range existing {
+		song, ok := decodeCandidate(candidate)
+		if !ok {
+			continue
+		}
+		merged = append(merged, candidate.Clone())
 		seen[songIdentity(song)] = struct{}{}
 		seenNames[songNameIdentity(song)] = struct{}{}
 	}
-	for _, song := range additional {
+	for _, candidate := range additional {
+		song, ok := decodeCandidate(candidate)
+		if !ok {
+			continue
+		}
 		key := songIdentity(song)
 		if _, ok := seen[key]; ok {
 			continue
@@ -432,9 +450,22 @@ func mergeSongs(existing, additional []model.Song) []model.Song {
 		}
 		seen[key] = struct{}{}
 		seenNames[nameKey] = struct{}{}
-		merged = append(merged, song)
+		merged = append(merged, candidate.Clone())
 	}
 	return merged
+}
+
+func decodeCandidate(candidate playlist.TrackCandidate) (model.Song, bool) {
+	title, ok := NewTitleExtractor().ExtractTitle(candidate.Clone())
+	title.Name = strings.TrimSpace(title.Name)
+	title.Artist = strings.TrimSpace(title.Artist)
+	if !ok || title.Name == "" {
+		return model.Song{}, false
+	}
+	return model.Song{
+		Name: title.Name, Artist: title.Artist,
+		Album: strings.TrimSpace(candidate.Album), Duration: strings.TrimSpace(candidate.Duration), Hash: strings.TrimSpace(candidate.Hash),
+	}, true
 }
 
 func songNameIdentity(song model.Song) string {

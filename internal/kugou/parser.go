@@ -10,16 +10,16 @@ import (
 	"strings"
 
 	"github.com/gguage/music-to-bb/internal/model"
+	"github.com/gguage/music-to-bb/internal/playlist"
 )
 
 var jsonScriptPattern = regexp.MustCompile(`(?is)<script[^>]*(?:application/json|__NEXT_DATA__)[^>]*>(.*?)</script>`)
 
 var listKeys = []string{"info", "songs", "list", "songlist", "songList", "data"}
 
-// ExtractEmbeddedSongs parses the JSON assignment and JSON script shapes used
-// by Kugou pages. It deliberately does not run CleanupSongs, matching the
-// Python embedded-HTML path.
-func ExtractEmbeddedSongs(pageHTML string) []model.Song {
+// ExtractEmbeddedTracks parses the JSON assignment and JSON script shapes
+// used by Kugou pages into provider-neutral raw track candidates.
+func ExtractEmbeddedTracks(pageHTML string) []playlist.TrackCandidate {
 	candidates := make([]string, 0, 8)
 	for _, match := range jsonScriptPattern.FindAllStringSubmatch(pageHTML, -1) {
 		if len(match) == 2 {
@@ -49,11 +49,18 @@ func ExtractEmbeddedSongs(pageHTML string) []model.Song {
 			continue
 		}
 		items := findSongItems(value, 0)
-		if songs := songsFromItems(items); len(songs) > 0 {
-			return songs
+		if tracks := trackCandidatesFromItems(items); len(tracks) > 0 {
+			return tracks
 		}
 	}
 	return nil
+}
+
+// ExtractEmbeddedSongs is retained for fixture and parity callers. Production
+// ingestion uses ExtractEmbeddedTracks and decodes through registered title
+// capabilities.
+func ExtractEmbeddedSongs(pageHTML string) []model.Song {
+	return playlist.DecodeTracks(ExtractEmbeddedTracks(pageHTML), []playlist.TitleExtractor{NewTitleExtractor()})
 }
 
 func balancedJSONAfter(text string, offset int) (string, bool) {
@@ -114,18 +121,18 @@ func balancedJSONAfter(text string, offset int) (string, bool) {
 }
 
 func decodeSongResponse(payload []byte) []model.Song {
-	return decodeSongPage(payload).Songs
+	return playlist.DecodeTracks(decodeSongPage(payload).Tracks, []playlist.TitleExtractor{NewTitleExtractor()})
 }
 
-func decodeSongPage(payload []byte) ParseResult {
+func decodeSongPage(payload []byte) playlist.RawResult {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return ParseResult{}
+		return playlist.RawResult{}
 	}
-	return ParseResult{
-		Songs:         songsFromItems(findSongItems(value, 0)),
+	return playlist.RawResult{
+		Tracks:        trackCandidatesFromItems(findSongItems(value, 0)),
 		ExpectedTotal: findExpectedTotal(value, 0),
 	}
 }
@@ -189,57 +196,90 @@ func findExpectedTotal(value any, depth int) int {
 	return 0
 }
 
-func songsFromItems(items []any) []model.Song {
-	songs := make([]model.Song, 0, len(items))
+func trackCandidatesFromItems(items []any) []playlist.TrackCandidate {
+	tracks := make([]playlist.TrackCandidate, 0, len(items))
 	seen := make(map[string]struct{}, len(items))
 	for _, rawItem := range items {
 		item, ok := rawItem.(map[string]any)
 		if !ok {
 			continue
 		}
-		nameKey, name := firstExistingWithKey(item, "songname", "name", "title", "songName", "filename", "FileName")
-		name = strings.TrimSpace(name)
-		if name == "" {
+		candidate := trackCandidate(item)
+		song, ok := decodeCandidate(candidate)
+		if !ok {
 			continue
 		}
-		artist := strings.TrimSpace(firstExisting(item, "singername", "author", "artist", "singerName"))
-		if artist == "" {
-			artist = singerNames(item["singerinfo"])
-		}
-		if nameKey == "filename" || nameKey == "FileName" || item["singerinfo"] != nil {
-			if filenameArtist, filenameTitle, ok := splitFilename(name); ok {
-				name = filenameTitle
-				if artist == "" {
-					artist = filenameArtist
-				}
-			}
-		}
-		key := name + "|" + artist
+		key := song.Name + "|" + song.Artist
 		if _, duplicate := seen[key]; duplicate {
 			continue
 		}
 		seen[key] = struct{}{}
-		songs = append(songs, model.Song{
-			Name: name, Artist: artist,
-			Album:    albumName(item),
-			Duration: formatDuration(firstValue(item, "duration", "timelength", "timelen")),
-			Hash:     firstExisting(item, "hash", "320hash", "filehash"),
-		})
+		tracks = append(tracks, candidate)
 	}
-	return songs
+	return tracks
+}
+
+func trackCandidate(item map[string]any) playlist.TrackCandidate {
+	fields := make(map[string]string, len(item))
+	for key, value := range item {
+		if scalar, ok := scalarValue(value); ok {
+			fields[key] = scalar
+		}
+	}
+	return playlist.TrackCandidate{
+		Fields:      fields,
+		ArtistNames: artistNames(item["singerinfo"]),
+		Album:       albumName(item),
+		Duration:    formatDuration(firstValue(item, "duration", "timelength", "timelen")),
+		Hash:        firstExisting(item, "hash", "320hash", "filehash"),
+	}
+}
+
+func scalarValue(value any) (string, bool) {
+	switch typed := value.(type) {
+	case nil:
+		return "", true
+	case string:
+		return typed, true
+	case json.Number:
+		return typed.String(), true
+	case float64:
+		return strconv.FormatFloat(typed, 'f', -1, 64), true
+	case int:
+		return strconv.Itoa(typed), true
+	case int64:
+		return strconv.FormatInt(typed, 10), true
+	case bool:
+		return strconv.FormatBool(typed), true
+	default:
+		return "", false
+	}
+}
+
+func artistNames(value any) []string {
+	if value == nil {
+		return nil
+	}
+	names := []string{}
+	items, ok := value.([]any)
+	if !ok {
+		return names
+	}
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := strings.TrimSpace(stringValue(item["name"]))
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func firstExisting(item map[string]any, keys ...string) string {
 	return stringValue(firstValue(item, keys...))
-}
-
-func firstExistingWithKey(item map[string]any, keys ...string) (string, string) {
-	for _, key := range keys {
-		if value, exists := item[key]; exists {
-			return key, stringValue(value)
-		}
-	}
-	return "", ""
 }
 
 func firstValue(item map[string]any, keys ...string) any {
@@ -285,35 +325,6 @@ func intValue(value any) int {
 	default:
 		return 0
 	}
-}
-
-func splitFilename(value string) (string, string, bool) {
-	parts := strings.SplitN(value, " - ", 2)
-	if len(parts) != 2 {
-		return "", "", false
-	}
-	artist := strings.TrimSpace(parts[0])
-	name := strings.TrimSpace(parts[1])
-	return artist, name, artist != "" && name != ""
-}
-
-func singerNames(value any) string {
-	items, ok := value.([]any)
-	if !ok {
-		return ""
-	}
-	names := make([]string, 0, len(items))
-	for _, raw := range items {
-		item, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		name := strings.TrimSpace(stringValue(item["name"]))
-		if name != "" {
-			names = append(names, name)
-		}
-	}
-	return strings.Join(names, "、")
 }
 
 func albumName(item map[string]any) string {

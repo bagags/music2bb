@@ -8,6 +8,8 @@ import (
 	"os"
 	"testing"
 	"time"
+
+	"github.com/gguage/music-to-bb/internal/playlist"
 )
 
 // This opt-in smoke test uses an existing verified browser by default. Setting
@@ -28,12 +30,16 @@ func TestLiveKugouExtraction(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	songs, err := NewExtractor(manager).Extract(ctx, rawURL)
+	source, err := playlist.ParseSource(rawURL)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(songs) == 0 {
-		t.Fatal("live browser extraction returned no songs")
+	result, err := NewExtractor(manager).ExtractPlaylist(ctx, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tracks) == 0 {
+		t.Fatal("live browser extraction returned no track candidates")
 	}
 }
 

@@ -13,6 +13,8 @@ import (
 type fakeBackend struct {
 	loginOpts music2bb.LoginOptions
 	matchOpts music2bb.MatchOptions
+	parseOpts []music2bb.ParseOptions
+	parse     func(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error)
 	created   music2bb.CreateFavoriteRequest
 	match     []music2bb.MatchResult
 	addedTo   int64
@@ -24,7 +26,11 @@ func (f *fakeBackend) LoginWithOptions(_ context.Context, opts music2bb.LoginOpt
 	return music2bb.Account{ID: 1, Name: "tester"}, f.loginErr
 }
 
-func (f *fakeBackend) ParsePlaylistWithOptions(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error) {
+func (f *fakeBackend) ParsePlaylistWithOptions(ctx context.Context, rawURL string, options music2bb.ParseOptions, observer music2bb.Observer) ([]music2bb.Song, error) {
+	f.parseOpts = append(f.parseOpts, options)
+	if f.parse != nil {
+		return f.parse(ctx, rawURL, options, observer)
+	}
 	return []music2bb.Song{{Name: "song", Artist: "artist"}}, nil
 }
 
@@ -67,6 +73,26 @@ func (f fakeBrowser) Install(context.Context, bool) (music2bb.BrowserStatus, err
 }
 func (fakeBrowser) Clear(context.Context) error { return nil }
 
+type recordingBrowser struct {
+	status       music2bb.BrowserStatus
+	statusCalls  int
+	installCalls int
+}
+
+func (b *recordingBrowser) Status(context.Context) (music2bb.BrowserStatus, error) {
+	b.statusCalls++
+	return b.status, nil
+}
+
+func (b *recordingBrowser) Install(context.Context, bool) (music2bb.BrowserStatus, error) {
+	b.installCalls++
+	b.status.Installed = true
+	b.status.Verified = true
+	return b.status, nil
+}
+
+func (*recordingBrowser) Clear(context.Context) error { return nil }
+
 func testApp(backend Backend) (*App, *bytes.Buffer, *bytes.Buffer) {
 	out := &bytes.Buffer{}
 	errOut := &bytes.Buffer{}
@@ -93,6 +119,70 @@ func TestConvertInterspersedOptions(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "成功: 1") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestConvertAutoInstallsApprovedBrowserAndRetriesAlways(t *testing.T) {
+	backend := &fakeBackend{}
+	backend.parse = func(_ context.Context, _ string, options music2bb.ParseOptions, _ music2bb.Observer) ([]music2bb.Song, error) {
+		if options.BrowserPolicy == music2bb.BrowserAlways {
+			return []music2bb.Song{{Name: "song", Artist: "artist"}}, nil
+		}
+		return nil, &music2bb.Error{Category: music2bb.ErrorExtraction, Operation: "parse playlist", Err: errors.New("direct failed")}
+	}
+	browser := &recordingBrowser{status: music2bb.BrowserStatus{ApproxBytes: 267_483_258}}
+	app, _, errOut := testApp(backend)
+	app.Browser = browser
+	app.IO.Interactive = true
+	app.IO.In = strings.NewReader("y\n")
+	if exit := app.Run(context.Background(), []string{"convert", "https://example.test/list", "--favorite", "9", "--yes"}); exit != ExitSuccess {
+		t.Fatalf("exit = %d, stderr = %q", exit, errOut.String())
+	}
+	if browser.statusCalls != 1 || browser.installCalls != 1 {
+		t.Fatalf("browser calls = status %d install %d", browser.statusCalls, browser.installCalls)
+	}
+	want := []music2bb.ParseOptions{{BrowserPolicy: music2bb.BrowserAuto}, {BrowserPolicy: music2bb.BrowserAlways}}
+	if len(backend.parseOpts) != len(want) || backend.parseOpts[0] != want[0] || backend.parseOpts[1] != want[1] {
+		t.Fatalf("parse options = %#v, want %#v", backend.parseOpts, want)
+	}
+}
+
+func TestConvertNeverDoesNotInspectOrInstallBrowser(t *testing.T) {
+	backend := &fakeBackend{parse: func(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error) {
+		return nil, &music2bb.Error{Category: music2bb.ErrorExtraction, Operation: "parse playlist", Err: errors.New("failed")}
+	}}
+	browser := &recordingBrowser{}
+	app, _, _ := testApp(backend)
+	app.Browser = browser
+	if exit := app.Run(context.Background(), []string{"convert", "https://example.test/list", "--browser", "never", "--favorite", "9", "--yes"}); exit != ExitExtraction {
+		t.Fatalf("exit = %d, want %d", exit, ExitExtraction)
+	}
+	if browser.statusCalls != 0 || browser.installCalls != 0 {
+		t.Fatalf("browser calls = status %d install %d", browser.statusCalls, browser.installCalls)
+	}
+}
+
+func TestHelpUsesGenericPlaylistURL(t *testing.T) {
+	app, out, _ := testApp(&fakeBackend{})
+	if exit := app.Run(context.Background(), nil); exit != ExitSuccess {
+		t.Fatalf("exit = %d, want %d", exit, ExitSuccess)
+	}
+	if !strings.Contains(out.String(), "在线歌单 → Bilibili 收藏夹") ||
+		!strings.Contains(out.String(), "music2bb convert <playlist-url> [options]") {
+		t.Fatalf("help = %q", out.String())
+	}
+	if strings.Contains(out.String(), "<kugou-url>") {
+		t.Fatalf("help retains provider-specific usage: %q", out.String())
+	}
+}
+
+func TestConvertUsageUsesGenericPlaylistURL(t *testing.T) {
+	app, _, errOut := testApp(&fakeBackend{})
+	if exit := app.Run(context.Background(), []string{"convert"}); exit != ExitInvalidInput {
+		t.Fatalf("exit = %d, want %d", exit, ExitInvalidInput)
+	}
+	if errOut.String() != "用法: music2bb convert <playlist-url> [options]\n" {
+		t.Fatalf("stderr = %q", errOut.String())
 	}
 }
 
@@ -139,6 +229,11 @@ func TestStableExitCategories(t *testing.T) {
 	}
 	if exit := app.Run(context.Background(), []string{"convert", "url", "--workers", "0"}); exit != ExitInvalidInput {
 		t.Fatalf("invalid exit = %d, want %d", exit, ExitInvalidInput)
+	}
+	for _, category := range []music2bb.ErrorCategory{music2bb.ErrorExtraction, music2bb.ErrorBrowser, music2bb.ErrorNetwork} {
+		if exit := exitFor(&music2bb.Error{Category: category, Err: errors.New("failed")}); exit != ExitExtraction {
+			t.Fatalf("category %q exit = %d, want %d", category, exit, ExitExtraction)
+		}
 	}
 }
 

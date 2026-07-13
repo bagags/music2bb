@@ -54,7 +54,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 		options.qrLogin = false
 	}
 	if set.NArg() != 1 || options.searchPages < 1 || options.topK < 1 || options.workers < 1 {
-		fmt.Fprintln(a.IO.Err, "用法: music2bb convert <kugou-url> [options]")
+		fmt.Fprintln(a.IO.Err, "用法: music2bb convert <playlist-url> [options]")
 		return ExitInvalidInput
 	}
 	policy := music2bb.BrowserPolicy(options.browser)

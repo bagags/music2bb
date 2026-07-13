@@ -4,10 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"time"
 
 	"github.com/gguage/music-to-bb/internal/model"
+	"github.com/gguage/music-to-bb/internal/playlist"
 	"github.com/go-rod/rod"
 	"github.com/go-rod/rod/lib/launcher"
 	"github.com/go-rod/rod/lib/proto"
@@ -26,13 +26,54 @@ func NewExtractor(manager *Manager) *Extractor {
 	return &Extractor{Manager: manager, LoadTimeout: 90 * time.Second}
 }
 
-func (e *Extractor) Extract(ctx context.Context, rawURL string) ([]model.Song, error) {
+// Available reports whether the manager has a checksum-verified browser. It
+// only inspects the managed cache and never installs or launches Chromium.
+func (e *Extractor) Available(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	if e == nil || e.Manager == nil {
-		return nil, &Error{Kind: ErrorNotInstalled, Op: "extract", Err: errors.New("browser manager is not configured")}
+		return false, nil
+	}
+	status, err := e.Manager.Status(ctx)
+	if err != nil {
+		return false, err
+	}
+	return status.Installed, nil
+}
+
+// ExtractPlaylist extracts ordered provider-neutral track candidates using
+// only the manager's verified Chromium executable.
+func (e *Extractor) ExtractPlaylist(ctx context.Context, source playlist.Source) (playlist.RawResult, error) {
+	return e.extractPlaylist(ctx, source.String())
+}
+
+// Extract preserves the legacy song-returning browser boundary while wiring
+// migrates to ExtractPlaylist. New orchestration should use ExtractPlaylist so
+// provider title capabilities can inspect the original source fields.
+func (e *Extractor) Extract(ctx context.Context, rawURL string) ([]model.Song, error) {
+	source, err := playlist.ParseSource(rawURL)
+	if err != nil {
+		return nil, &Error{Kind: ErrorExtraction, Op: "parse URL", Err: err}
+	}
+	result, err := e.ExtractPlaylist(ctx, source)
+	songs := playlist.DecodeTracks(result.Tracks, nil)
+	if err == nil && len(songs) == 0 {
+		err = &Error{Kind: ErrorExtraction, Op: "extract", Err: errors.New("dynamic page contained no songs")}
+	}
+	return songs, err
+}
+
+func (e *Extractor) extractPlaylist(ctx context.Context, rawURL string) (playlist.RawResult, error) {
+	if e == nil || e.Manager == nil {
+		return playlist.RawResult{}, &Error{Kind: ErrorNotInstalled, Op: "extract", Err: errors.New("browser manager is not configured")}
 	}
 	executable, err := e.Manager.Executable(ctx)
 	if err != nil {
-		return nil, err
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return playlist.RawResult{}, ctxErr
+		}
+		return playlist.RawResult{}, err
 	}
 	timeout := e.LoadTimeout
 	if timeout <= 0 {
@@ -48,34 +89,34 @@ func (e *Extractor) Extract(ctx context.Context, rawURL string) ([]model.Song, e
 		Leakless(true)
 	controlURL, err := process.Launch()
 	if err != nil {
-		return nil, &Error{Kind: ErrorLaunch, Op: "launch", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorLaunch, "launch", err)
 	}
 	defer process.Cleanup()
 	defer process.Kill()
 
 	browser := rod.New().Context(ctx).ControlURL(controlURL)
 	if err := browser.Connect(); err != nil {
-		return nil, &Error{Kind: ErrorLaunch, Op: "connect", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorLaunch, "connect", err)
 	}
 	defer browser.Close()
 	page, err := browser.Page(proto.TargetCreateTarget{})
 	if err != nil {
-		return nil, &Error{Kind: ErrorExtraction, Op: "new page", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "new page", err)
 	}
 	defer page.Close()
 	if err := page.SetUserAgent(&proto.NetworkSetUserAgentOverride{UserAgent: mobileUserAgent}); err != nil {
-		return nil, &Error{Kind: ErrorExtraction, Op: "set user agent", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "set user agent", err)
 	}
 	if err := page.SetViewport(&proto.EmulationSetDeviceMetricsOverride{
 		Width: 390, Height: 844, DeviceScaleFactor: 1, Mobile: true,
 	}); err != nil {
-		return nil, &Error{Kind: ErrorExtraction, Op: "set viewport", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "set viewport", err)
 	}
 	if err := page.Navigate(rawURL); err != nil {
-		return nil, &Error{Kind: ErrorExtraction, Op: "navigate", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "navigate", err)
 	}
 	if err := page.WaitLoad(); err != nil {
-		return nil, &Error{Kind: ErrorExtraction, Op: "wait load", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "wait load", err)
 	}
 	// Best effort: pages with a permanent analytics connection never become
 	// idle, so failure here must not suppress DOM extraction.
@@ -100,63 +141,51 @@ func (e *Extractor) Extract(ctx context.Context, rawURL string) ([]model.Song, e
 			stale = 0
 		}
 		if err := waitContext(ctx, 250*time.Millisecond); err != nil {
-			return nil, err
+			return playlist.RawResult{}, err
 		}
 	}
 
-	result, err := page.Eval(extractSongsJS)
+	result, err := page.Eval(extractTracksJS)
 	if err != nil {
-		return nil, &Error{Kind: ErrorExtraction, Op: "evaluate", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "evaluate", err)
 	}
-	songs, err := decodeBrowserSongs(result.Value.Str())
+	raw, err := decodeBrowserResult(result.Value.Str())
 	if err != nil {
-		return nil, &Error{Kind: ErrorExtraction, Op: "decode", Err: err}
+		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "decode", err)
 	}
-	if len(songs) == 0 {
-		return nil, &Error{Kind: ErrorExtraction, Op: "extract", Err: errors.New("dynamic page contained no songs")}
+	if len(raw.Tracks) == 0 {
+		return playlist.RawResult{}, &Error{Kind: ErrorExtraction, Op: "extract", Err: errors.New("dynamic page contained no track candidates")}
 	}
-	return songs, nil
+	return raw, nil
 }
 
-type browserSong struct {
-	Name   string `json:"name"`
-	Artist string `json:"artist"`
+type browserResult struct {
+	Tracks        []playlist.TrackCandidate `json:"tracks"`
+	ExpectedTotal int                       `json:"expectedTotal"`
 }
 
-func decodeBrowserSongs(payload string) ([]model.Song, error) {
-	var raw []browserSong
-	if err := json.Unmarshal([]byte(payload), &raw); err != nil {
-		return nil, err
+func decodeBrowserResult(payload string) (playlist.RawResult, error) {
+	var decoded browserResult
+	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
+		return playlist.RawResult{}, err
 	}
-	songs := make([]model.Song, 0, len(raw))
-	seen := make(map[string]struct{}, len(raw))
-	for _, item := range raw {
-		name := strings.TrimSpace(item.Name)
-		artist := strings.TrimSpace(item.Artist)
-		if name == "" || isNonSongText(name) {
-			continue
-		}
-		key := name + "|" + artist
-		if _, duplicate := seen[key]; duplicate {
-			continue
-		}
-		seen[key] = struct{}{}
-		songs = append(songs, model.Song{Name: name, Artist: artist})
+	tracks := make([]playlist.TrackCandidate, len(decoded.Tracks))
+	for index, candidate := range decoded.Tracks {
+		candidate.FilterNonSongText = true
+		candidate.MaxTitleLength = 100
+		tracks[index] = candidate.Clone()
 	}
-	return songs, nil
+	return playlist.RawResult{Tracks: tracks, ExpectedTotal: decoded.ExpectedTotal}, nil
 }
 
-func isNonSongText(text string) bool {
-	for _, skipped := range []string{
-		"全部", "播放", "VIP", "收藏", "歌单", "分享", "下载", "评论", "首歌曲",
-		"正在加载", "加载中", "Loading", "暂无", "没有更多", "已到底",
-	} {
-		if strings.Contains(text, skipped) {
-			return true
-		}
+func browserOperationError(ctx context.Context, kind ErrorKind, operation string, err error) error {
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return ctxErr
 	}
-	return false
+	return &Error{Kind: kind, Op: operation, Err: err}
 }
+
+var _ playlist.BrowserExtractor = (*Extractor)(nil)
 
 func waitContext(ctx context.Context, duration time.Duration) error {
 	timer := time.NewTimer(duration)
@@ -196,18 +225,84 @@ const scrollJS = `() => {
   return String(document.body.scrollHeight);
 }`
 
-const extractSongsJS = `() => {
+const extractTracksJS = `() => {
   const results = [];
-  const seen = new Set();
-  const add = (name, artist) => {
-    name = String(name || '').trim();
-    artist = String(artist || '').trim();
-    if (!name || name.length >= 100) return;
-    const key = name + '|' + artist;
-    if (!seen.has(key)) {
-      seen.add(key);
-      results.push({name, artist});
+  const owns = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+  const scalarText = (value) => {
+    if (value === null) return '';
+    switch (typeof value) {
+      case 'string':
+      case 'number':
+      case 'boolean':
+      case 'bigint':
+        return String(value);
+      default:
+        return '';
     }
+  };
+  const scalarFields = (item) => {
+    const fields = Object.create(null);
+    for (const key of Object.keys(item)) {
+      const value = item[key];
+      if (value === null || ['string', 'number', 'boolean', 'bigint'].includes(typeof value)) {
+        fields[key] = scalarText(value);
+      }
+    }
+    return fields;
+  };
+  const firstPresent = (item, keys) => {
+    for (const key of keys) {
+      if (owns(item, key)) return {found: true, value: item[key]};
+    }
+    return {found: false, value: null};
+  };
+  const nestedArtistNames = (item) => {
+    if (!owns(item, 'singerinfo') || item.singerinfo === null) return null;
+    if (!Array.isArray(item.singerinfo)) return [];
+    return item.singerinfo.map((singer) => {
+      if (!singer || typeof singer !== 'object' || !owns(singer, 'name')) return '';
+      return scalarText(singer.name);
+    });
+  };
+  const formatDuration = (value) => {
+    let seconds;
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      seconds = Math.trunc(value);
+    } else if (typeof value === 'string' && /^[+-]?\d+$/.test(value)) {
+      seconds = Number.parseInt(value, 10);
+    } else {
+      return '';
+    }
+    if (!Number.isFinite(seconds)) return '';
+    if (seconds >= 24 * 60 * 60) seconds = Math.trunc(seconds / 1000);
+    let minutes = Math.trunc(seconds / 60);
+    let remainder = seconds % 60;
+    if (remainder < 0) {
+      minutes--;
+      remainder += 60;
+    }
+    return String(minutes) + ':' + String(remainder).padStart(2, '0');
+  };
+  const addDataCandidate = (item) => {
+    const fields = scalarFields(item);
+    const titleKeys = ['songname', 'name', 'title', 'songName', 'filename', 'FileName'];
+    if (!titleKeys.some((key) => owns(fields, key) && fields[key].trim())) return;
+
+    const albumValue = firstPresent(item, ['album_name', 'albumname', 'album']);
+    let album = albumValue.found ? scalarText(albumValue.value).trim() : '';
+    if (!album && item.albuminfo && typeof item.albuminfo === 'object') {
+      album = scalarText(item.albuminfo.name).trim();
+    }
+    const durationValue = firstPresent(item, ['duration', 'timelength', 'timelen']);
+    const hashValue = firstPresent(item, ['hash', '320hash', 'filehash']);
+    results.push({
+      fields,
+      artistNames: nestedArtistNames(item),
+      visibleText: '',
+      album,
+      duration: durationValue.found ? formatDuration(durationValue.value) : '',
+      hash: hashValue.found ? scalarText(hashValue.value) : ''
+    });
   };
   const walk = (value, depth = 0, visited = new Set()) => {
     if (!value || typeof value !== 'object' || depth > 8 || visited.has(value)) return;
@@ -215,17 +310,7 @@ const extractSongsJS = `() => {
     if (Array.isArray(value)) {
       for (const item of value) {
         if (item && typeof item === 'object') {
-          let name = item.songname || item.name || item.title || item.songName || item.filename || item.FileName;
-          let artist = item.singername || item.author || item.artist || item.singerName;
-          if (!artist && Array.isArray(item.singerinfo)) {
-            artist = item.singerinfo.map((singer) => singer && singer.name).filter(Boolean).join('、');
-          }
-          if ((item.filename || item.FileName || item.singerinfo) && String(name || '').includes(' - ')) {
-            const parts = String(name).split(' - ');
-            if (!artist) artist = parts.shift().trim(); else parts.shift();
-            name = parts.join(' - ').trim();
-          }
-          add(name, artist);
+          addDataCandidate(item);
           walk(item, depth + 1, visited);
         }
       }
@@ -256,17 +341,14 @@ const extractSongsJS = `() => {
       }
       return '';
     };
-    let name = firstText(['[class*="song-name"]', '[class*="songName"]', '.songname', '.song_name', '[class*="title"]', '.name', '[class*="name"]', 'h3', 'h4']);
-    let artist = firstText(['[class*="singer"]', '[class*="artist"]', '.singername', '.singer_name', '[class*="author"]', '.artist', '[class*="singerName"]']);
-    if (!name) {
-      const text = (item.innerText || '').trim();
-      if (text.includes(' - ')) {
-        const parts = text.split(' - ');
-        name = parts.shift().trim();
-        artist = parts.join(' - ').trim();
-      }
-    }
-    add(name, artist);
+    const name = firstText(['[class*="song-name"]', '[class*="songName"]', '.songname', '.song_name', '[class*="title"]', '.name', '[class*="name"]', 'h3', 'h4']);
+    const artist = firstText(['[class*="singer"]', '[class*="artist"]', '.singername', '.singer_name', '[class*="author"]', '.artist', '[class*="singerName"]']);
+    const visibleText = (item.innerText || '').trim();
+    if (!name && !visibleText) continue;
+    const fields = Object.create(null);
+    if (name) fields.name = name;
+    if (artist) fields.artist = artist;
+    results.push({fields, artistNames: null, visibleText, album: '', duration: '', hash: ''});
   }
-  return JSON.stringify(results);
+  return JSON.stringify({tracks: results, expectedTotal: 0});
 }`

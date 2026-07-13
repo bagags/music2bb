@@ -92,10 +92,10 @@ func (a *App) defaults() {
 }
 
 func (a *App) printHelp() {
-	fmt.Fprintln(a.IO.Out, `酷狗歌单 → Bilibili 收藏夹
+	fmt.Fprintln(a.IO.Out, `在线歌单 → Bilibili 收藏夹
 
 用法:
-  music2bb convert <kugou-url> [options]
+  music2bb convert <playlist-url> [options]
   music2bb login [--no-qr-login]
   music2bb favorites list
   music2bb favorites create <name> [--intro TEXT] [--private]

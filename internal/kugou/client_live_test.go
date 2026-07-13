@@ -21,7 +21,7 @@ func TestLiveDirectExtraction(t *testing.T) {
 	defer cancel()
 	sharedHTTP := netx.New(15*time.Second, 4, netx.NewTokenLimiter(4, 1))
 	defer sharedHTTP.CloseIdleConnections()
-	songs, err := New(sharedHTTP, nil).ParsePlaylist(ctx, rawURL)
+	songs, err := New(sharedHTTP).ParsePlaylist(ctx, rawURL)
 	if err != nil {
 		t.Fatal(err)
 	}

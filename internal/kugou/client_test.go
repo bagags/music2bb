@@ -14,6 +14,7 @@ import (
 
 	"github.com/gguage/music-to-bb/internal/model"
 	"github.com/gguage/music-to-bb/internal/netx"
+	"github.com/gguage/music-to-bb/internal/playlist"
 )
 
 func TestParsePlaylistUsesResolvedIDAndFixedEndpointOrder(t *testing.T) {
@@ -41,7 +42,7 @@ func TestParsePlaylistUsesResolvedIDAndFixedEndpointOrder(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, server, nil,
+	client := newTestClient(t, server,
 		APIEndpoint{URL: server.URL + "/api/first", Parameters: true},
 		APIEndpoint{URL: server.URL + "/api/{playlist_id}"},
 		APIEndpoint{URL: server.URL + "/api/should-not-run"},
@@ -77,53 +78,25 @@ func TestParsePlaylistUsesOriginalIDWhenRedirectDropsQuery(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	client := newTestClient(t, server, nil, APIEndpoint{URL: server.URL + "/api", Parameters: true})
+	client := newTestClient(t, server, APIEndpoint{URL: server.URL + "/api", Parameters: true})
 	songs, err := client.ParsePlaylist(context.Background(), server.URL+"/share?global_specialid=original")
 	if err != nil || len(songs) != 1 || songs[0].Name != "Song" {
 		t.Fatalf("ParsePlaylist = %#v, %v", songs, err)
 	}
 }
 
-func TestParsePlaylistFallsBackToEmbeddedJSONBeforeBrowser(t *testing.T) {
-	browser := &stubExtractor{songs: []model.Song{{Name: "Browser should not run"}}}
+func TestParsePlaylistFallsBackToEmbeddedJSON(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`<html><script>var songData = [{"songname":"Embedded","singername":"Singer"}];</script></html>`))
 	}))
 	defer server.Close()
-	client := newTestClient(t, server, browser)
+	client := newTestClient(t, server)
 	songs, err := client.ParsePlaylist(context.Background(), server.URL)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(songs) != 1 || songs[0].Name != "Embedded" {
 		t.Fatalf("songs = %#v", songs)
-	}
-	if browser.calls != 0 {
-		t.Fatalf("browser calls = %d, want 0", browser.calls)
-	}
-}
-
-func TestParsePlaylistUsesBrowserOnlyAfterDirectMethodsFail(t *testing.T) {
-	browser := &stubExtractor{songs: []model.Song{
-		{Name: "Song", Artist: "Singer"},
-		{Name: "Song"},
-		{Name: "Singer"},
-	}}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("<html>no data</html>"))
-	}))
-	defer server.Close()
-	client := newTestClient(t, server, browser)
-	songs, err := client.ParsePlaylist(context.Background(), server.URL)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []model.Song{{Name: "Song", Artist: "Singer"}}
-	if !reflect.DeepEqual(songs, want) {
-		t.Fatalf("songs = %#v, want %#v", songs, want)
-	}
-	if browser.calls != 1 {
-		t.Fatalf("browser calls = %d, want 1", browser.calls)
 	}
 }
 
@@ -132,7 +105,7 @@ func TestParsePlaylistHonorsCancellation(t *testing.T) {
 		<-r.Context().Done()
 	}))
 	defer server.Close()
-	client := newTestClient(t, server, nil)
+	client := newTestClient(t, server)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := client.ParsePlaylist(ctx, server.URL); err != context.Canceled {
@@ -140,8 +113,38 @@ func TestParsePlaylistHonorsCancellation(t *testing.T) {
 	}
 }
 
+func TestParsePlaylistCancellationWinsOverPartialAPIResult(t *testing.T) {
+	var cancel context.CancelFunc
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/share":
+			http.Redirect(w, r, "/resolved?specialid=42", http.StatusFound)
+		case "/resolved":
+			w.Write([]byte("<html></html>"))
+		case "/api/partial":
+			w.Write([]byte(`{"data":{"total":2,"info":[{"songname":"Partial","singername":"Singer"}]}}`))
+		case "/api/cancel":
+			cancel()
+			<-r.Context().Done()
+		}
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server,
+		APIEndpoint{URL: server.URL + "/api/partial"},
+		APIEndpoint{URL: server.URL + "/api/cancel"},
+	)
+	ctx, stop := context.WithCancel(context.Background())
+	cancel = stop
+	defer stop()
+	result, err := client.ParsePlaylistResult(ctx, server.URL+"/share")
+	if err != context.Canceled || len(result.Songs) != 0 {
+		t.Fatalf("ParsePlaylistResult = %#v, %v; want no partial result and context.Canceled", result, err)
+	}
+}
+
 func TestParsePlaylistRejectsInvalidURL(t *testing.T) {
-	client := New(nil, nil)
+	client := New(nil)
 	if _, err := client.ParsePlaylist(context.Background(), "not a URL"); !IsKind(err, ErrorInvalidURL) {
 		t.Fatalf("error = %v, want %s", err, ErrorInvalidURL)
 	}
@@ -195,7 +198,7 @@ func TestCurrentPublicEndpointUsesEmptyPost(t *testing.T) {
 		w.Write([]byte(`{"data":[{"songname":"Current","singername":"Singer","duration":185000}]}`))
 	}))
 	defer server.Close()
-	client := newTestClient(t, server, nil, APIEndpoint{URL: server.URL + "/sid={playlist_id}", Method: http.MethodPost})
+	client := newTestClient(t, server, APIEndpoint{URL: server.URL + "/sid={playlist_id}", Method: http.MethodPost})
 	songs, err := client.ParsePlaylist(context.Background(), server.URL+"/?specialid=42")
 	if err != nil {
 		t.Fatal(err)
@@ -217,6 +220,34 @@ func TestDecodeSongResponseNestedShapes(t *testing.T) {
 		if len(songs) != 1 || songs[0].Name != "A" || songs[0].Artist != "B" {
 			t.Fatalf("decodeSongResponse(%s) = %#v", payload, songs)
 		}
+	}
+}
+
+func TestDecodeSongResponseDoesNotApplyBrowserUITextFilter(t *testing.T) {
+	songs := decodeSongResponse([]byte(`{"data":{"info":[{"songname":"播放列表","singername":"Singer"}]}}`))
+	if len(songs) != 1 || songs[0].Name != "播放列表" {
+		t.Fatalf("decodeSongResponse = %#v", songs)
+	}
+}
+
+func TestDecodeSongPagePreservesRawFieldsAndDecodedMetadata(t *testing.T) {
+	result := decodeSongPage([]byte(`{
+      "data":{"total":1,"info":[{
+        "filename":"Singer A - Song / Mix",
+        "singerinfo":[{"name":"Singer A"},{"name":"Singer B"}],
+        "albuminfo":{"name":"Album"},
+        "timelen":185000,
+        "320hash":"hash-value"
+      }]}
+    }`))
+	if result.ExpectedTotal != 1 || len(result.Tracks) != 1 {
+		t.Fatalf("raw result = %#v", result)
+	}
+	track := result.Tracks[0]
+	if track.Fields["filename"] != "Singer A - Song / Mix" ||
+		!reflect.DeepEqual(track.ArtistNames, []string{"Singer A", "Singer B"}) ||
+		track.Album != "Album" || track.Duration != "3:05" || track.Hash != "hash-value" {
+		t.Fatalf("track = %#v", track)
 	}
 }
 
@@ -247,7 +278,7 @@ func TestPaginatedAPIParsesFilenameAndDeclaredTotal(t *testing.T) {
 	}))
 	defer server.Close()
 
-	client := newTestClient(t, server, nil, APIEndpoint{URL: server.URL + "/api", Parameters: true, Paginated: true})
+	client := newTestClient(t, server, APIEndpoint{URL: server.URL + "/api", Parameters: true, Paginated: true})
 	result, err := client.ParsePlaylistResult(context.Background(), server.URL+"/share")
 	if err != nil {
 		t.Fatal(err)
@@ -257,6 +288,42 @@ func TestPaginatedAPIParsesFilenameAndDeclaredTotal(t *testing.T) {
 	}
 	if result.Songs[0].Name != "Song 00" || result.Songs[0].Artist != "Artist 00" {
 		t.Fatalf("first song = %#v", result.Songs[0])
+	}
+}
+
+func TestPaginatedAPIContinuesWhenCleanupReplacesEarlierTrack(t *testing.T) {
+	var pages []int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api" {
+			w.Write([]byte("<html></html>"))
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		pages = append(pages, page)
+		var items []map[string]any
+		switch page {
+		case 1:
+			items = []map[string]any{{"songname": "Song"}}
+		case 2:
+			items = []map[string]any{{"songname": "Song", "singername": "Artist"}}
+		case 3:
+			items = []map[string]any{{"songname": "Unique", "singername": "Artist"}}
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"total": 2, "info": items}})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, APIEndpoint{URL: server.URL + "/api", Parameters: true, Paginated: true})
+	result, err := client.ParsePlaylistResult(context.Background(), server.URL+"/?specialid=42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []model.Song{{Name: "Song", Artist: "Artist"}, {Name: "Unique", Artist: "Artist"}}
+	if !reflect.DeepEqual(result.Songs, want) || result.ExpectedTotal != 2 {
+		t.Fatalf("result = %#v, want songs %#v total 2", result, want)
+	}
+	if !reflect.DeepEqual(pages, []int{1, 2, 3}) {
+		t.Fatalf("pages = %v, want [1 2 3]", pages)
 	}
 }
 
@@ -301,7 +368,7 @@ func TestSignedCollectionPaginationReturnsAll109Songs(t *testing.T) {
 	httpClient := netx.New(time.Second, 2, nil)
 	httpClient.HTTP = server.Client()
 	httpClient.MaxAttempts = 1
-	client := New(httpClient, nil,
+	client := New(httpClient,
 		WithAPIEndpoints(nil),
 		WithCollectionEndpoint(server.URL+"/collection"),
 		WithNow(func() time.Time { return fixedNow }),
@@ -325,20 +392,21 @@ func TestCollectionParamsMatchesCurrentH5Signature(t *testing.T) {
 	}
 }
 
-func TestExtractionHelpersPreserveExpectedTotalAndCrossSourceDeduplication(t *testing.T) {
-	result := betterResult(
-		ParseResult{Songs: []model.Song{{Name: "API"}}, ExpectedTotal: 109},
-		ParseResult{Songs: []model.Song{{Name: "One"}, {Name: "Two"}}},
+func TestExtractionHelpersUseNormalizedCountAndPreserveExpectedTotal(t *testing.T) {
+	result := betterRawResult(
+		playlist.RawResult{Tracks: candidatesFromSongs([]model.Song{{Name: "API"}}), ExpectedTotal: 109},
+		playlist.RawResult{Tracks: candidatesFromSongs([]model.Song{{Name: "One"}, {Name: "Two"}})},
 	)
-	if len(result.Songs) != 2 || result.ExpectedTotal != 109 {
-		t.Fatalf("betterResult = %#v", result)
+	if len(result.Tracks) != 2 || result.ExpectedTotal != 109 {
+		t.Fatalf("betterRawResult = %#v", result)
 	}
-	merged := mergeSongs(
-		[]model.Song{{Name: "Same", Artist: "Singer", Hash: "ABC"}},
-		[]model.Song{{Name: "Same", Artist: "Singer"}, {Name: "Other", Artist: "Singer"}},
-	)
-	if len(merged) != 2 || merged[1].Name != "Other" {
-		t.Fatalf("mergeSongs = %#v", merged)
+
+	phantomHeavy := playlist.RawResult{Tracks: candidatesFromSongs([]model.Song{
+		{Name: "Song", Artist: "Singer"}, {Name: "Song"}, {Name: "Singer"},
+	})}
+	valid := playlist.RawResult{Tracks: candidatesFromSongs([]model.Song{{Name: "One"}, {Name: "Two"}})}
+	if got := betterRawResult(phantomHeavy, valid); len(got.Tracks) != 2 || got.Tracks[0].Fields["songname"] != "One" {
+		t.Fatalf("betterRawResult chose raw rather than normalized count: %#v", got)
 	}
 }
 
@@ -392,24 +460,24 @@ func mustAtoi(t *testing.T, value string) int {
 	return number
 }
 
-type stubExtractor struct {
-	songs []model.Song
-	err   error
-	calls int
-}
-
-func (s *stubExtractor) Extract(context.Context, string) ([]model.Song, error) {
-	s.calls++
-	return append([]model.Song(nil), s.songs...), s.err
-}
-
-func newTestClient(t *testing.T, server *httptest.Server, browser Extractor, endpoints ...APIEndpoint) *Client {
+func newTestClient(t *testing.T, server *httptest.Server, endpoints ...APIEndpoint) *Client {
 	t.Helper()
 	httpClient := netx.New(time.Second, 2, nil)
 	httpClient.HTTP = server.Client()
 	httpClient.MaxAttempts = 1
 	options := []Option{WithAPIEndpoints(endpoints), WithCollectionEndpoint(server.URL + "/collection")}
-	return New(httpClient, browser, options...)
+	return New(httpClient, options...)
+}
+
+func candidatesFromSongs(songs []model.Song) []playlist.TrackCandidate {
+	tracks := make([]playlist.TrackCandidate, 0, len(songs))
+	for _, song := range songs {
+		tracks = append(tracks, playlist.TrackCandidate{
+			Fields: map[string]string{"songname": song.Name, "singername": song.Artist},
+			Album:  song.Album, Duration: song.Duration, Hash: song.Hash,
+		})
+	}
+	return tracks
 }
 
 func TestJSONFixturesRemainValid(t *testing.T) {

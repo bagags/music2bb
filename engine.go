@@ -7,8 +7,7 @@ import (
 
 	"github.com/gguage/music-to-bb/internal/bilibili"
 	"github.com/gguage/music-to-bb/internal/config"
-	"github.com/gguage/music-to-bb/internal/kugou"
-	"github.com/gguage/music-to-bb/internal/model"
+	"github.com/gguage/music-to-bb/internal/playlist"
 	"github.com/gguage/music-to-bb/internal/service"
 	"github.com/gguage/music-to-bb/internal/wiring"
 )
@@ -162,12 +161,21 @@ func (e *Engine) AddToFavorite(ctx context.Context, favoriteID int64, matches []
 
 type browserExtractorAdapter struct{ extractor BrowserExtractor }
 
-func (a browserExtractorAdapter) Extract(ctx context.Context, rawURL string) ([]model.Song, error) {
-	songs, err := a.extractor.Extract(ctx, rawURL)
-	return songsToInternal(songs), err
+func (a browserExtractorAdapter) Available(context.Context) (bool, error) { return true, nil }
+
+func (a browserExtractorAdapter) ExtractPlaylist(ctx context.Context, source playlist.Source) (playlist.RawResult, error) {
+	songs, err := a.extractor.Extract(ctx, source.String())
+	result := playlist.RawResult{Tracks: make([]playlist.TrackCandidate, len(songs))}
+	for index, song := range songs {
+		result.Tracks[index] = playlist.TrackCandidate{
+			Fields: map[string]string{"name": song.Name, "artist": song.Artist},
+			Album:  song.Album, Duration: song.Duration, Hash: song.Hash,
+		}
+	}
+	return result, err
 }
 
-var _ kugou.Extractor = browserExtractorAdapter{}
+var _ playlist.BrowserExtractor = browserExtractorAdapter{}
 
 type storageCookieAdapter struct{ storage Storage }
 
