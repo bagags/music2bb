@@ -11,12 +11,12 @@ import (
 )
 
 // This opt-in smoke test uses an existing verified browser by default. Setting
-// KG2BB_TEST_BROWSER_ARCHIVE installs the pinned archive into an isolated cache
+// MUSIC2BB_TEST_BROWSER_ARCHIVE installs the pinned archive into an isolated cache
 // first, which keeps release validation independent of workstation state.
 func TestLiveKugouExtraction(t *testing.T) {
-	rawURL := os.Getenv("KG2BB_TEST_KUGOU_URL")
+	rawURL := os.Getenv("MUSIC2BB_TEST_KUGOU_URL")
 	if rawURL == "" {
-		t.Skip("KG2BB_TEST_KUGOU_URL is not set")
+		t.Skip("MUSIC2BB_TEST_KUGOU_URL is not set")
 	}
 	manager := liveTestManager(t)
 	status, err := manager.Status(context.Background())
@@ -39,7 +39,7 @@ func TestLiveKugouExtraction(t *testing.T) {
 
 func liveTestManager(t *testing.T) *Manager {
 	t.Helper()
-	archivePath := os.Getenv("KG2BB_TEST_BROWSER_ARCHIVE")
+	archivePath := os.Getenv("MUSIC2BB_TEST_BROWSER_ARCHIVE")
 	if archivePath == "" {
 		manager, err := NewManager("")
 		if err != nil {

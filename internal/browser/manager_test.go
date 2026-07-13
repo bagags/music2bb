@@ -147,7 +147,7 @@ func TestInstallRejectsChecksumMismatchWithoutExtraction(t *testing.T) {
 
 func TestClearRemovesOnlyBrowserCache(t *testing.T) {
 	root := t.TempDir()
-	cacheDir := filepath.Join(root, "kg2bb", "browser")
+	cacheDir := filepath.Join(root, "music2bb", "browser")
 	outside := filepath.Join(root, "keep")
 	if err := os.WriteFile(outside, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)

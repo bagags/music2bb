@@ -12,9 +12,9 @@ import (
 )
 
 func TestLiveDirectExtraction(t *testing.T) {
-	rawURL := os.Getenv("KG2BB_TEST_KUGOU_URL")
+	rawURL := os.Getenv("MUSIC2BB_TEST_KUGOU_URL")
 	if rawURL == "" {
-		t.Skip("KG2BB_TEST_KUGOU_URL is not set")
+		t.Skip("MUSIC2BB_TEST_KUGOU_URL is not set")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()

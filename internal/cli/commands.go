@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	kg2bb "github.com/gguage/music-to-bb"
+	music2bb "github.com/gguage/music-to-bb"
 )
 
 func (a *App) runLogin(ctx context.Context, args []string) int {
@@ -30,7 +30,7 @@ func (a *App) runLogin(ctx context.Context, args []string) int {
 	if noQR {
 		allowQR = false
 	}
-	account, err := a.Backend.LoginWithOptions(ctx, kg2bb.LoginOptions{UseStoredCookies: true, AllowQR: allowQR, Timeout: 3 * time.Minute}, a.observer(false))
+	account, err := a.Backend.LoginWithOptions(ctx, music2bb.LoginOptions{UseStoredCookies: true, AllowQR: allowQR, Timeout: 3 * time.Minute}, a.observer(false))
 	if err != nil {
 		fmt.Fprintf(a.IO.Err, "登录失败: %v\n", err)
 		return exitFor(err)
@@ -41,10 +41,10 @@ func (a *App) runLogin(ctx context.Context, args []string) int {
 
 func (a *App) runFavorites(ctx context.Context, args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(a.IO.Err, "用法: kg2bb favorites list|create")
+		fmt.Fprintln(a.IO.Err, "用法: music2bb favorites list|create")
 		return ExitInvalidInput
 	}
-	if _, err := a.Backend.LoginWithOptions(ctx, kg2bb.LoginOptions{UseStoredCookies: true, AllowQR: a.IO.Interactive}, a.observer(false)); err != nil {
+	if _, err := a.Backend.LoginWithOptions(ctx, music2bb.LoginOptions{UseStoredCookies: true, AllowQR: a.IO.Interactive}, a.observer(false)); err != nil {
 		fmt.Fprintf(a.IO.Err, "登录失败: %v\n", err)
 		return exitFor(err)
 	}
@@ -83,10 +83,10 @@ func (a *App) runFavorites(ctx context.Context, args []string) int {
 			return ExitInvalidInput
 		}
 		if set.NArg() != 1 || strings.TrimSpace(set.Arg(0)) == "" {
-			fmt.Fprintln(a.IO.Err, "用法: kg2bb favorites create <name> [--intro TEXT] [--private]")
+			fmt.Fprintln(a.IO.Err, "用法: music2bb favorites create <name> [--intro TEXT] [--private]")
 			return ExitInvalidInput
 		}
-		favorite, err := a.Backend.CreateFavorite(ctx, kg2bb.CreateFavoriteRequest{Title: strings.TrimSpace(set.Arg(0)), Intro: intro, Private: private})
+		favorite, err := a.Backend.CreateFavorite(ctx, music2bb.CreateFavoriteRequest{Title: strings.TrimSpace(set.Arg(0)), Intro: intro, Private: private})
 		if err != nil {
 			fmt.Fprintf(a.IO.Err, "创建收藏夹失败: %v\n", err)
 			return exitFor(err)
@@ -112,7 +112,7 @@ func (a *App) runBrowser(ctx context.Context, args []string) int {
 		filtered = append(filtered, args[index])
 	}
 	if len(filtered) != 1 || a.Browser == nil {
-		fmt.Fprintln(a.IO.Err, "用法: kg2bb browser install|status|clear")
+		fmt.Fprintln(a.IO.Err, "用法: music2bb browser install|status|clear")
 		return ExitInvalidInput
 	}
 	switch filtered[0] {
@@ -160,7 +160,7 @@ func (a *App) runBrowser(ctx context.Context, args []string) int {
 	}
 }
 
-func browserDownloadSize(status kg2bb.BrowserStatus) string {
+func browserDownloadSize(status music2bb.BrowserStatus) string {
 	if status.ApproxBytes <= 0 {
 		return "约 150–270 MB"
 	}

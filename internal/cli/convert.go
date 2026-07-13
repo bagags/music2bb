@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	kg2bb "github.com/gguage/music-to-bb"
+	music2bb "github.com/gguage/music-to-bb"
 )
 
 type convertOptions struct {
@@ -27,7 +27,7 @@ type convertOptions struct {
 
 func (a *App) runConvert(ctx context.Context, args []string) int {
 	set := newFlagSet("convert", a.IO.Err)
-	options := convertOptions{searchPages: 3, topK: 3, workers: 4, browser: string(kg2bb.BrowserAuto), qrLogin: true}
+	options := convertOptions{searchPages: 3, topK: 3, workers: 4, browser: string(music2bb.BrowserAuto), qrLogin: true}
 	set.IntVar(&options.searchPages, "search-pages", options.searchPages, "每首歌曲搜索页数")
 	set.IntVar(&options.topK, "top-k", options.topK, "保留候选数量")
 	set.IntVar(&options.workers, "workers", options.workers, "并发匹配数量")
@@ -53,11 +53,11 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 		options.qrLogin = false
 	}
 	if set.NArg() != 1 || options.searchPages < 1 || options.topK < 1 || options.workers < 1 {
-		fmt.Fprintln(a.IO.Err, "用法: kg2bb convert <kugou-url> [options]")
+		fmt.Fprintln(a.IO.Err, "用法: music2bb convert <kugou-url> [options]")
 		return ExitInvalidInput
 	}
-	policy := kg2bb.BrowserPolicy(options.browser)
-	if policy != kg2bb.BrowserAuto && policy != kg2bb.BrowserNever && policy != kg2bb.BrowserAlways {
+	policy := music2bb.BrowserPolicy(options.browser)
+	if policy != music2bb.BrowserAuto && policy != music2bb.BrowserNever && policy != music2bb.BrowserAlways {
 		fmt.Fprintln(a.IO.Err, "--browser 必须是 auto、never 或 always")
 		return ExitInvalidInput
 	}
@@ -67,7 +67,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	}
 
 	observer := a.observer(options.verbose)
-	account, err := a.Backend.LoginWithOptions(ctx, kg2bb.LoginOptions{UseStoredCookies: true, AllowQR: options.qrLogin}, observer)
+	account, err := a.Backend.LoginWithOptions(ctx, music2bb.LoginOptions{UseStoredCookies: true, AllowQR: options.qrLogin}, observer)
 	if err != nil {
 		fmt.Fprintf(a.IO.Err, "登录失败: %v\n", err)
 		return exitFor(err)
@@ -76,18 +76,18 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 		fmt.Fprintf(a.IO.Err, "已登录: %s\n", account.Name)
 	}
 
-	songs, err := a.Backend.ParsePlaylistWithOptions(ctx, set.Arg(0), kg2bb.ParseOptions{BrowserPolicy: policy}, observer)
-	if err != nil && policy != kg2bb.BrowserNever && a.Browser != nil {
+	songs, err := a.Backend.ParsePlaylistWithOptions(ctx, set.Arg(0), music2bb.ParseOptions{BrowserPolicy: policy}, observer)
+	if err != nil && policy != music2bb.BrowserNever && a.Browser != nil {
 		status, statusErr := a.Browser.Status(ctx)
 		if statusErr == nil && !status.Installed {
-			approved := policy == kg2bb.BrowserAlways
+			approved := policy == music2bb.BrowserAlways
 			if a.IO.Interactive && !approved {
 				answer, _ := a.ask(fmt.Sprintf("直接解析失败。下载%s的校验版 Chromium 后重试? [y/N] ", browserDownloadSize(status)))
 				approved = strings.EqualFold(answer, "y")
 			}
 			if approved {
 				if _, installErr := a.Browser.Install(ctx, true); installErr == nil {
-					songs, err = a.Backend.ParsePlaylistWithOptions(ctx, set.Arg(0), kg2bb.ParseOptions{BrowserPolicy: kg2bb.BrowserAlways}, observer)
+					songs, err = a.Backend.ParsePlaylistWithOptions(ctx, set.Arg(0), music2bb.ParseOptions{BrowserPolicy: music2bb.BrowserAlways}, observer)
 				} else {
 					fmt.Fprintf(a.IO.Err, "浏览器安装失败: %v\n", installErr)
 				}
@@ -109,11 +109,11 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	}
 	fmt.Fprintf(a.IO.Out, "获取到 %d 首歌曲\n", len(songs))
 
-	var outcomes []kg2bb.MatchResult
+	var outcomes []music2bb.MatchResult
 	if options.manual {
 		outcomes = a.manualMatchAll(ctx, songs)
 	} else {
-		outcomes, err = a.Backend.Match(ctx, songs, kg2bb.MatchOptions{SearchPages: options.searchPages, TopK: options.topK, Workers: options.workers}, observer)
+		outcomes, err = a.Backend.Match(ctx, songs, music2bb.MatchOptions{SearchPages: options.searchPages, TopK: options.topK, Workers: options.workers}, observer)
 		if err != nil {
 			fmt.Fprintf(a.IO.Err, "部分匹配请求失败: %v\n", err)
 			if exitFor(err) == ExitCancelled {
@@ -168,9 +168,9 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	return ExitSuccess
 }
 
-func (a *App) readManualSongs() []kg2bb.Song {
+func (a *App) readManualSongs() []music2bb.Song {
 	fmt.Fprintln(a.IO.Out, "请输入歌曲（每行格式：歌名 - 歌手，空行结束）:")
-	songs := make([]kg2bb.Song, 0)
+	songs := make([]music2bb.Song, 0)
 	for {
 		line, err := a.reader.ReadString('\n')
 		if err != nil && line == "" {
@@ -181,7 +181,7 @@ func (a *App) readManualSongs() []kg2bb.Song {
 			break
 		}
 		parts := strings.SplitN(line, " - ", 2)
-		song := kg2bb.Song{Name: strings.TrimSpace(parts[0])}
+		song := music2bb.Song{Name: strings.TrimSpace(parts[0])}
 		if len(parts) == 2 {
 			song.Artist = strings.TrimSpace(parts[1])
 		}
@@ -192,16 +192,16 @@ func (a *App) readManualSongs() []kg2bb.Song {
 	return songs
 }
 
-func (a *App) manualMatchAll(ctx context.Context, songs []kg2bb.Song) []kg2bb.MatchResult {
-	outcomes := make([]kg2bb.MatchResult, len(songs))
+func (a *App) manualMatchAll(ctx context.Context, songs []music2bb.Song) []music2bb.MatchResult {
+	outcomes := make([]music2bb.MatchResult, len(songs))
 	for index, song := range songs {
 		outcomes[index] = a.manualMatch(ctx, song)
 	}
 	return outcomes
 }
 
-func (a *App) manualMatch(ctx context.Context, song kg2bb.Song) kg2bb.MatchResult {
-	outcome := kg2bb.MatchResult{Song: song}
+func (a *App) manualMatch(ctx context.Context, song music2bb.Song) music2bb.MatchResult {
+	outcome := music2bb.MatchResult{Song: song}
 	if !a.IO.Interactive {
 		return outcome
 	}
@@ -243,7 +243,7 @@ func (a *App) manualMatch(ctx context.Context, song kg2bb.Song) kg2bb.MatchResul
 	return outcome
 }
 
-func (a *App) reviewMatches(ctx context.Context, outcomes []kg2bb.MatchResult) []kg2bb.MatchResult {
+func (a *App) reviewMatches(ctx context.Context, outcomes []music2bb.MatchResult) []music2bb.MatchResult {
 	for index := range outcomes {
 		for candidateIndex, candidate := range outcomes[index].Candidates {
 			if candidate.Video != nil {
@@ -276,10 +276,10 @@ func (a *App) reviewMatches(ctx context.Context, outcomes []kg2bb.MatchResult) [
 	return outcomes
 }
 
-func (a *App) selectFavorite(ctx context.Context, selector string) (kg2bb.Favorite, error) {
+func (a *App) selectFavorite(ctx context.Context, selector string) (music2bb.Favorite, error) {
 	favorites, err := a.Backend.ListFavorites(ctx)
 	if err != nil {
-		return kg2bb.Favorite{}, err
+		return music2bb.Favorite{}, err
 	}
 	if selector != "" {
 		if id, ok := parseInt64(selector); ok {
@@ -295,10 +295,10 @@ func (a *App) selectFavorite(ctx context.Context, selector string) (kg2bb.Favori
 				}
 			}
 		}
-		return kg2bb.Favorite{}, &kg2bb.Error{Category: kg2bb.ErrorInvalidInput, Operation: "select favorite", Message: "未找到指定收藏夹"}
+		return music2bb.Favorite{}, &music2bb.Error{Category: music2bb.ErrorInvalidInput, Operation: "select favorite", Message: "未找到指定收藏夹"}
 	}
 	if !a.IO.Interactive {
-		return kg2bb.Favorite{}, &kg2bb.Error{Category: kg2bb.ErrorInvalidInput, Operation: "select favorite", Message: "非交互模式需要 --favorite"}
+		return music2bb.Favorite{}, &music2bb.Error{Category: music2bb.ErrorInvalidInput, Operation: "select favorite", Message: "非交互模式需要 --favorite"}
 	}
 	sort.Slice(favorites, func(i, j int) bool { return favorites[i].ID < favorites[j].ID })
 	for index, favorite := range favorites {
@@ -307,7 +307,7 @@ func (a *App) selectFavorite(ctx context.Context, selector string) (kg2bb.Favori
 	choice, _ := a.ask("选择收藏夹序号: ")
 	selected, parseErr := strconv.Atoi(choice)
 	if parseErr != nil || selected < 1 || selected > len(favorites) {
-		return kg2bb.Favorite{}, &kg2bb.Error{Category: kg2bb.ErrorInvalidInput, Operation: "select favorite", Message: "无效收藏夹序号"}
+		return music2bb.Favorite{}, &music2bb.Error{Category: music2bb.ErrorInvalidInput, Operation: "select favorite", Message: "无效收藏夹序号"}
 	}
 	return favorites[selected-1], nil
 }

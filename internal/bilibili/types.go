@@ -1,5 +1,5 @@
 // Package bilibili implements the unofficial Bilibili operations used by
-// kg2bb. It contains no terminal interaction and all network operations are
+// music2bb. It contains no terminal interaction and all network operations are
 // cancellation-aware.
 package bilibili
 

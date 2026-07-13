@@ -1,15 +1,15 @@
 # Architecture
 
-`kg2bb` separates terminal interaction, application orchestration, and external
+`music2bb` separates terminal interaction, application orchestration, and external
 site protocols so the conversion engine can be reused by another Go frontend.
 
 ## Dependency direction
 
 ```text
-cmd/kg2bb
+cmd/music2bb
 ├── internal/cli
-│   └── kg2bb (module root)
-└── kg2bb (module root)
+│   └── music2bb (module root)
+└── music2bb (module root)
     ├── internal/service
     ├── internal/wiring
     ├── internal/model
@@ -38,8 +38,8 @@ consumers outside this module.
 
 | Package | Responsibility |
 |---|---|
-| `kg2bb` | Stable public engine, caller-owned result types, typed errors, observers, and dependency-injection options |
-| `cmd/kg2bb` | Process startup, signal handling, terminal detection, and build-version reporting |
+| `music2bb` | Stable public engine, caller-owned result types, typed errors, observers, and dependency-injection options |
+| `cmd/music2bb` | Process startup, signal handling, terminal detection, and build-version reporting |
 | `internal/cli` | Command parsing, prompts, review flows, rendering, and exit-code mapping |
 | `internal/service` | Use-case orchestration through small client and matcher interfaces |
 | `internal/wiring` | Production construction and adapters between service interfaces and concrete clients |
@@ -84,7 +84,7 @@ defaults.
 - The `browser_install` tag validates a pinned Chromium archive, launch, and
   controlled extraction.
 - The `authenticated` tag can create and remove temporary Bilibili resources;
-  it additionally requires `KG2BB_RUN_AUTH_CANARY=1`.
+  it additionally requires `MUSIC2BB_RUN_AUTH_CANARY=1`.
 
 ## Extending the system
 

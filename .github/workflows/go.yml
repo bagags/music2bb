@@ -31,13 +31,13 @@ jobs:
         include:
           - goos: darwin
             goarch: arm64
-            output: kg2bb-darwin-arm64
+            output: music2bb-darwin-arm64
           - goos: darwin
             goarch: amd64
-            output: kg2bb-darwin-amd64
+            output: music2bb-darwin-amd64
           - goos: windows
             goarch: amd64
-            output: kg2bb-windows-amd64.exe
+            output: music2bb-windows-amd64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -53,7 +53,7 @@ jobs:
         run: |
           mkdir -p dist
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o dist/${{ matrix.output }} ./cmd/kg2bb
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o dist/${{ matrix.output }} ./cmd/music2bb
           cd dist
           sha256sum '${{ matrix.output }}' > '${{ matrix.output }}.sha256'
       - uses: actions/upload-artifact@v4
@@ -94,7 +94,7 @@ jobs:
       - name: Install, launch, and extract a controlled page
         shell: bash
         env:
-          KG2BB_TEST_BROWSER_ARCHIVE: ${{ github.workspace }}/.browser-cache/${{ matrix.archive }}
+          MUSIC2BB_TEST_BROWSER_ARCHIVE: ${{ github.workspace }}/.browser-cache/${{ matrix.archive }}
         run: go test -count=1 -tags=browser_install ./internal/browser -run TestPinnedArchiveInstallLaunchAndExtraction -v
 
   release:

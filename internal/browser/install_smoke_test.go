@@ -13,9 +13,9 @@ import (
 )
 
 func TestPinnedArchiveInstallLaunchAndExtraction(t *testing.T) {
-	archivePath := os.Getenv("KG2BB_TEST_BROWSER_ARCHIVE")
+	archivePath := os.Getenv("MUSIC2BB_TEST_BROWSER_ARCHIVE")
 	if archivePath == "" {
-		t.Skip("KG2BB_TEST_BROWSER_ARCHIVE is not set")
+		t.Skip("MUSIC2BB_TEST_BROWSER_ARCHIVE is not set")
 	}
 	info, err := os.Stat(archivePath)
 	if err != nil {

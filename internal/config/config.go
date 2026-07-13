@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	appName             = "kg2bb"
+	appName             = "music2bb"
 	migrationMarkerName = ".migration-v1"
 )
 
@@ -303,7 +303,7 @@ func atomicWriteFile(path string, data []byte, mode fs.FileMode) (err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	temporary, err := os.CreateTemp(filepath.Dir(path), ".kg2bb-*")
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".music2bb-*")
 	if err != nil {
 		return err
 	}

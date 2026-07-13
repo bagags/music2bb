@@ -10,24 +10,24 @@ import (
 	"strconv"
 	"strings"
 
-	kg2bb "github.com/gguage/music-to-bb"
+	music2bb "github.com/gguage/music-to-bb"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
 type Backend interface {
-	LoginWithOptions(context.Context, kg2bb.LoginOptions, kg2bb.Observer) (kg2bb.Account, error)
-	ParsePlaylistWithOptions(context.Context, string, kg2bb.ParseOptions, kg2bb.Observer) ([]kg2bb.Song, error)
-	Match(context.Context, []kg2bb.Song, kg2bb.MatchOptions, kg2bb.Observer) ([]kg2bb.MatchResult, error)
-	SearchCandidates(context.Context, kg2bb.Song, string, int) ([]kg2bb.MatchResult, error)
-	VideoDetail(context.Context, string) (kg2bb.Video, error)
-	ListFavorites(context.Context) ([]kg2bb.Favorite, error)
-	CreateFavorite(context.Context, kg2bb.CreateFavoriteRequest) (kg2bb.Favorite, error)
-	AddToFavorite(context.Context, int64, []kg2bb.MatchResult, kg2bb.Observer) (kg2bb.AddResult, error)
+	LoginWithOptions(context.Context, music2bb.LoginOptions, music2bb.Observer) (music2bb.Account, error)
+	ParsePlaylistWithOptions(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error)
+	Match(context.Context, []music2bb.Song, music2bb.MatchOptions, music2bb.Observer) ([]music2bb.MatchResult, error)
+	SearchCandidates(context.Context, music2bb.Song, string, int) ([]music2bb.MatchResult, error)
+	VideoDetail(context.Context, string) (music2bb.Video, error)
+	ListFavorites(context.Context) ([]music2bb.Favorite, error)
+	CreateFavorite(context.Context, music2bb.CreateFavoriteRequest) (music2bb.Favorite, error)
+	AddToFavorite(context.Context, int64, []music2bb.MatchResult, music2bb.Observer) (music2bb.AddResult, error)
 }
 
 type BrowserManager interface {
-	Status(context.Context) (kg2bb.BrowserStatus, error)
-	Install(context.Context, bool) (kg2bb.BrowserStatus, error)
+	Status(context.Context) (music2bb.BrowserStatus, error)
+	Install(context.Context, bool) (music2bb.BrowserStatus, error)
 	Clear(context.Context) error
 }
 
@@ -98,24 +98,24 @@ func (a *App) printHelp() {
 	fmt.Fprintln(a.IO.Out, `酷狗歌单 → Bilibili 收藏夹
 
 用法:
-  kg2bb convert <kugou-url> [options]
-  kg2bb cli <kugou-url> [options]
-  kg2bb login [--no-qr-login]
-  kg2bb favorites list
-  kg2bb favorites create <name> [--intro TEXT] [--private]
-  kg2bb browser install|status|clear
-  kg2bb version`)
+  music2bb convert <kugou-url> [options]
+  music2bb cli <kugou-url> [options]
+  music2bb login [--no-qr-login]
+  music2bb favorites list
+  music2bb favorites create <name> [--intro TEXT] [--private]
+  music2bb browser install|status|clear
+  music2bb version`)
 }
 
-func (a *App) observer(verbose bool) kg2bb.Observer {
-	return kg2bb.ObserverFunc(func(event kg2bb.ProgressEvent) {
+func (a *App) observer(verbose bool) music2bb.Observer {
+	return music2bb.ObserverFunc(func(event music2bb.ProgressEvent) {
 		switch event.Kind {
-		case kg2bb.EventQR:
+		case music2bb.EventQR:
 			fmt.Fprintln(a.IO.Out, "请使用 Bilibili 客户端扫描二维码:")
 			fmt.Fprint(a.IO.Out, renderQR(event.QRPayload))
-		case kg2bb.EventWarning:
+		case music2bb.EventWarning:
 			fmt.Fprintln(a.IO.Err, event.Message)
-		case kg2bb.EventSong:
+		case music2bb.EventSong:
 			if event.Song != nil {
 				if event.Match != nil && event.Match.Video != nil {
 					fmt.Fprintf(a.IO.Out, "[%d/%d] ✓ %s → %s\n", event.Current, event.Total, event.Song.Name, event.Match.Video.Title)

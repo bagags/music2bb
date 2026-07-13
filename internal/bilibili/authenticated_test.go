@@ -14,15 +14,15 @@ import (
 )
 
 // This destructive canary is doubly opt-in: it requires the authenticated
-// build tag and KG2BB_RUN_AUTH_CANARY=1. It never runs in the default suite.
+// build tag and MUSIC2BB_RUN_AUTH_CANARY=1. It never runs in the default suite.
 func TestAuthenticatedFavoriteLifecycleCanary(t *testing.T) {
-	if os.Getenv("KG2BB_RUN_AUTH_CANARY") != "1" {
-		t.Skip("set KG2BB_RUN_AUTH_CANARY=1 to acknowledge remote writes")
+	if os.Getenv("MUSIC2BB_RUN_AUTH_CANARY") != "1" {
+		t.Skip("set MUSIC2BB_RUN_AUTH_CANARY=1 to acknowledge remote writes")
 	}
-	cookieFile := os.Getenv("KG2BB_TEST_COOKIE_FILE")
-	bvid := os.Getenv("KG2BB_TEST_BVID")
+	cookieFile := os.Getenv("MUSIC2BB_TEST_COOKIE_FILE")
+	bvid := os.Getenv("MUSIC2BB_TEST_BVID")
 	if cookieFile == "" || bvid == "" {
-		t.Skip("KG2BB_TEST_COOKIE_FILE and KG2BB_TEST_BVID are required")
+		t.Skip("MUSIC2BB_TEST_COOKIE_FILE and MUSIC2BB_TEST_BVID are required")
 	}
 	client, err := New(Config{CookieFile: cookieFile, Timeout: 30 * time.Second, WriteInterval: 250 * time.Millisecond})
 	if err != nil {
@@ -41,8 +41,8 @@ func TestAuthenticatedFavoriteLifecycleCanary(t *testing.T) {
 
 	// Bilibili currently limits favorite titles to 20 characters. Keep the
 	// canary uniquely identifiable without depending on the server truncating it.
-	title := fmt.Sprintf("kg2bb-%d", time.Now().Unix())
-	favorite, err := client.CreateFavorite(ctx, CreateFavoriteRequest{Title: title, Intro: "kg2bb authenticated integration canary", Private: true})
+	title := fmt.Sprintf("music2bb-%d", time.Now().Unix())
+	favorite, err := client.CreateFavorite(ctx, CreateFavoriteRequest{Title: title, Intro: "music2bb authenticated integration canary", Private: true})
 	if err != nil {
 		t.Fatal(err)
 	}

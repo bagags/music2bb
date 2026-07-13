@@ -1,4 +1,4 @@
-package kg2bb
+package music2bb
 
 import (
 	"github.com/gguage/music-to-bb/internal/model"

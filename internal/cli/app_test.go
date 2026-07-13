@@ -7,56 +7,56 @@ import (
 	"strings"
 	"testing"
 
-	kg2bb "github.com/gguage/music-to-bb"
+	music2bb "github.com/gguage/music-to-bb"
 )
 
 type fakeBackend struct {
-	loginOpts kg2bb.LoginOptions
-	matchOpts kg2bb.MatchOptions
-	created   kg2bb.CreateFavoriteRequest
+	loginOpts music2bb.LoginOptions
+	matchOpts music2bb.MatchOptions
+	created   music2bb.CreateFavoriteRequest
 	loginErr  error
 }
 
-func (f *fakeBackend) LoginWithOptions(_ context.Context, opts kg2bb.LoginOptions, _ kg2bb.Observer) (kg2bb.Account, error) {
+func (f *fakeBackend) LoginWithOptions(_ context.Context, opts music2bb.LoginOptions, _ music2bb.Observer) (music2bb.Account, error) {
 	f.loginOpts = opts
-	return kg2bb.Account{ID: 1, Name: "tester"}, f.loginErr
+	return music2bb.Account{ID: 1, Name: "tester"}, f.loginErr
 }
 
-func (f *fakeBackend) ParsePlaylistWithOptions(context.Context, string, kg2bb.ParseOptions, kg2bb.Observer) ([]kg2bb.Song, error) {
-	return []kg2bb.Song{{Name: "song", Artist: "artist"}}, nil
+func (f *fakeBackend) ParsePlaylistWithOptions(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error) {
+	return []music2bb.Song{{Name: "song", Artist: "artist"}}, nil
 }
 
-func (f *fakeBackend) Match(_ context.Context, songs []kg2bb.Song, opts kg2bb.MatchOptions, _ kg2bb.Observer) ([]kg2bb.MatchResult, error) {
+func (f *fakeBackend) Match(_ context.Context, songs []music2bb.Song, opts music2bb.MatchOptions, _ music2bb.Observer) ([]music2bb.MatchResult, error) {
 	f.matchOpts = opts
-	video := kg2bb.Video{BVID: "BV1", Title: "song", Uploader: "artist"}
-	return []kg2bb.MatchResult{{Song: songs[0], HasSelection: true, Video: &video, Matched: true}}, nil
+	video := music2bb.Video{BVID: "BV1", Title: "song", Uploader: "artist"}
+	return []music2bb.MatchResult{{Song: songs[0], HasSelection: true, Video: &video, Matched: true}}, nil
 }
 
-func (f *fakeBackend) SearchCandidates(context.Context, kg2bb.Song, string, int) ([]kg2bb.MatchResult, error) {
+func (f *fakeBackend) SearchCandidates(context.Context, music2bb.Song, string, int) ([]music2bb.MatchResult, error) {
 	return nil, nil
 }
 
-func (f *fakeBackend) VideoDetail(context.Context, string) (kg2bb.Video, error) {
-	return kg2bb.Video{}, nil
+func (f *fakeBackend) VideoDetail(context.Context, string) (music2bb.Video, error) {
+	return music2bb.Video{}, nil
 }
 
-func (f *fakeBackend) ListFavorites(context.Context) ([]kg2bb.Favorite, error) {
-	return []kg2bb.Favorite{{ID: 9, Title: "target"}}, nil
+func (f *fakeBackend) ListFavorites(context.Context) ([]music2bb.Favorite, error) {
+	return []music2bb.Favorite{{ID: 9, Title: "target"}}, nil
 }
 
-func (f *fakeBackend) CreateFavorite(_ context.Context, request kg2bb.CreateFavoriteRequest) (kg2bb.Favorite, error) {
+func (f *fakeBackend) CreateFavorite(_ context.Context, request music2bb.CreateFavoriteRequest) (music2bb.Favorite, error) {
 	f.created = request
-	return kg2bb.Favorite{ID: 10, Title: request.Title}, nil
+	return music2bb.Favorite{ID: 10, Title: request.Title}, nil
 }
 
-func (f *fakeBackend) AddToFavorite(context.Context, int64, []kg2bb.MatchResult, kg2bb.Observer) (kg2bb.AddResult, error) {
-	return kg2bb.AddResult{FavoriteID: 9, Succeeded: []string{"BV1"}}, nil
+func (f *fakeBackend) AddToFavorite(context.Context, int64, []music2bb.MatchResult, music2bb.Observer) (music2bb.AddResult, error) {
+	return music2bb.AddResult{FavoriteID: 9, Succeeded: []string{"BV1"}}, nil
 }
 
-type fakeBrowser struct{ status kg2bb.BrowserStatus }
+type fakeBrowser struct{ status music2bb.BrowserStatus }
 
-func (f fakeBrowser) Status(context.Context) (kg2bb.BrowserStatus, error) { return f.status, nil }
-func (f fakeBrowser) Install(context.Context, bool) (kg2bb.BrowserStatus, error) {
+func (f fakeBrowser) Status(context.Context) (music2bb.BrowserStatus, error) { return f.status, nil }
+func (f fakeBrowser) Install(context.Context, bool) (music2bb.BrowserStatus, error) {
 	return f.status, nil
 }
 func (fakeBrowser) Clear(context.Context) error { return nil }
@@ -66,7 +66,7 @@ func testApp(backend Backend) (*App, *bytes.Buffer, *bytes.Buffer) {
 	errOut := &bytes.Buffer{}
 	return &App{
 		Backend: backend,
-		Browser: fakeBrowser{status: kg2bb.BrowserStatus{Installed: true, Revision: 1, ApproxBytes: 267_483_258, Verified: true, ExecutablePath: "/tmp/chrome"}},
+		Browser: fakeBrowser{status: music2bb.BrowserStatus{Installed: true, Revision: 1, ApproxBytes: 267_483_258, Verified: true, ExecutablePath: "/tmp/chrome"}},
 		IO:      IO{In: strings.NewReader(""), Out: out, Err: errOut},
 		Version: "v1.2.3",
 	}, out, errOut
@@ -79,7 +79,7 @@ func TestCompatibilityAliasAndInterspersedOptions(t *testing.T) {
 	if exit != ExitSuccess {
 		t.Fatalf("exit = %d, stderr=%s", exit, errOut.String())
 	}
-	if backend.matchOpts != (kg2bb.MatchOptions{SearchPages: 2, TopK: 5, Workers: 3}) {
+	if backend.matchOpts != (music2bb.MatchOptions{SearchPages: 2, TopK: 5, Workers: 3}) {
 		t.Fatalf("match options = %#v", backend.matchOpts)
 	}
 	if backend.loginOpts.AllowQR {
@@ -115,7 +115,7 @@ func TestFavoritesCreateAllowsFlagsAfterName(t *testing.T) {
 }
 
 func TestStableExitCategories(t *testing.T) {
-	backend := &fakeBackend{loginErr: &kg2bb.Error{Category: kg2bb.ErrorAuthentication, Operation: "login", Err: errors.New("expired")}}
+	backend := &fakeBackend{loginErr: &music2bb.Error{Category: music2bb.ErrorAuthentication, Operation: "login", Err: errors.New("expired")}}
 	app, _, _ := testApp(backend)
 	if exit := app.Run(context.Background(), []string{"convert", "url", "--favorite", "9", "--yes"}); exit != ExitAuthentication {
 		t.Fatalf("exit = %d, want %d", exit, ExitAuthentication)

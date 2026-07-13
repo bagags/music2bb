@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/signal"
 
-	kg2bb "github.com/gguage/music-to-bb"
+	music2bb "github.com/gguage/music-to-bb"
 	"github.com/gguage/music-to-bb/internal/cli"
 	"golang.org/x/term"
 )
@@ -25,7 +25,7 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	engine, err := kg2bb.New(kg2bb.Config{ConfigDir: cli.ExtractConfigDir(args)})
+	engine, err := music2bb.New(music2bb.Config{ConfigDir: cli.ExtractConfigDir(args)})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "初始化失败: %v\n", err)
 		return cli.ExitInternal
@@ -48,7 +48,7 @@ func run(args []string) int {
 
 func versionString() string {
 	if version == "dev" {
-		return "kg2bb dev"
+		return "music2bb dev"
 	}
-	return fmt.Sprintf("kg2bb %s (commit %s, built %s)", version, commit, date)
+	return fmt.Sprintf("music2bb %s (commit %s, built %s)", version, commit, date)
 }

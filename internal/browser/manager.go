@@ -75,7 +75,7 @@ func DefaultCacheDir() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return filepath.Join(root, "kg2bb", "browser"), nil
+	return filepath.Join(root, "music2bb", "browser"), nil
 }
 
 func NewManager(cacheDir string) (*Manager, error) {
