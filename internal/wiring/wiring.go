@@ -145,7 +145,7 @@ type playlistAdapter struct {
 	externalBrowser bool
 }
 
-func (a *playlistAdapter) ParsePlaylist(ctx context.Context, rawURL string, policy service.BrowserPolicy) ([]model.Song, error) {
+func (a *playlistAdapter) ParsePlaylist(ctx context.Context, rawURL string, policy service.BrowserPolicy) (service.PlaylistResult, error) {
 	client := a.direct
 	switch policy {
 	case "", service.BrowserAuto:
@@ -162,20 +162,20 @@ func (a *playlistAdapter) ParsePlaylist(ctx context.Context, rawURL string, poli
 		}
 		status, err := a.manager.Status(ctx)
 		if err != nil {
-			return nil, &service.OperationError{Category: service.ErrorBrowser, Operation: "browser status", Err: err}
+			return service.PlaylistResult{}, &service.OperationError{Category: service.ErrorBrowser, Operation: "browser status", Err: err}
 		}
 		if !status.Installed {
-			return nil, &service.OperationError{Category: service.ErrorBrowser, Operation: "parse playlist", Message: "verified browser is not installed"}
+			return service.PlaylistResult{}, &service.OperationError{Category: service.ErrorBrowser, Operation: "parse playlist", Message: "verified browser is not installed"}
 		}
 		client = a.browser
 	default:
-		return nil, &service.OperationError{Category: service.ErrorInvalidInput, Operation: "parse playlist", Message: "invalid browser policy"}
+		return service.PlaylistResult{}, &service.OperationError{Category: service.ErrorInvalidInput, Operation: "parse playlist", Message: "invalid browser policy"}
 	}
-	songs, err := client.ParsePlaylist(ctx, rawURL)
+	result, err := client.ParsePlaylistResult(ctx, rawURL)
 	if kugou.IsKind(err, kugou.ErrorInvalidURL) {
-		return nil, &service.OperationError{Category: service.ErrorInvalidInput, Operation: "parse playlist", Err: err}
+		return service.PlaylistResult{}, &service.OperationError{Category: service.ErrorInvalidInput, Operation: "parse playlist", Err: err}
 	}
-	return songs, err
+	return service.PlaylistResult{Songs: result.Songs, ExpectedTotal: result.ExpectedTotal}, err
 }
 
 type bilibiliAdapter struct {

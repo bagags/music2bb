@@ -114,13 +114,20 @@ func balancedJSONAfter(text string, offset int) (string, bool) {
 }
 
 func decodeSongResponse(payload []byte) []model.Song {
+	return decodeSongPage(payload).Songs
+}
+
+func decodeSongPage(payload []byte) ParseResult {
 	decoder := json.NewDecoder(bytes.NewReader(payload))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return nil
+		return ParseResult{}
 	}
-	return songsFromItems(findSongItems(value, 0))
+	return ParseResult{
+		Songs:         songsFromItems(findSongItems(value, 0)),
+		ExpectedTotal: findExpectedTotal(value, 0),
+	}
 }
 
 func findSongItems(value any, depth int) []any {
@@ -152,12 +159,34 @@ func findSongItems(value any, depth int) []any {
 }
 
 func hasSongNameKey(item map[string]any) bool {
-	for _, key := range []string{"songname", "name", "title", "songName", "FileName"} {
+	for _, key := range []string{"songname", "name", "title", "songName", "filename", "FileName"} {
 		if value, exists := item[key]; exists && strings.TrimSpace(stringValue(value)) != "" {
 			return true
 		}
 	}
 	return false
+}
+
+func findExpectedTotal(value any, depth int) int {
+	if depth > 10 || value == nil {
+		return 0
+	}
+	switch typed := value.(type) {
+	case map[string]any:
+		for _, key := range []string{"total", "count"} {
+			if total := intValue(typed[key]); total > 0 {
+				return total
+			}
+		}
+		for _, key := range listKeys {
+			if child, ok := typed[key]; ok {
+				if total := findExpectedTotal(child, depth+1); total > 0 {
+					return total
+				}
+			}
+		}
+	}
+	return 0
 }
 
 func songsFromItems(items []any) []model.Song {
@@ -168,11 +197,23 @@ func songsFromItems(items []any) []model.Song {
 		if !ok {
 			continue
 		}
-		name := strings.TrimSpace(firstExisting(item, "songname", "name", "title", "songName", "FileName"))
+		nameKey, name := firstExistingWithKey(item, "songname", "name", "title", "songName", "filename", "FileName")
+		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
 		}
 		artist := strings.TrimSpace(firstExisting(item, "singername", "author", "artist", "singerName"))
+		if artist == "" {
+			artist = singerNames(item["singerinfo"])
+		}
+		if nameKey == "filename" || nameKey == "FileName" || item["singerinfo"] != nil {
+			if filenameArtist, filenameTitle, ok := splitFilename(name); ok {
+				name = filenameTitle
+				if artist == "" {
+					artist = filenameArtist
+				}
+			}
+		}
 		key := name + "|" + artist
 		if _, duplicate := seen[key]; duplicate {
 			continue
@@ -180,8 +221,8 @@ func songsFromItems(items []any) []model.Song {
 		seen[key] = struct{}{}
 		songs = append(songs, model.Song{
 			Name: name, Artist: artist,
-			Album:    firstExisting(item, "album_name", "albumname", "album"),
-			Duration: formatDuration(firstValue(item, "duration", "timelength")),
+			Album:    albumName(item),
+			Duration: formatDuration(firstValue(item, "duration", "timelength", "timelen")),
 			Hash:     firstExisting(item, "hash", "320hash", "filehash"),
 		})
 	}
@@ -190,6 +231,15 @@ func songsFromItems(items []any) []model.Song {
 
 func firstExisting(item map[string]any, keys ...string) string {
 	return stringValue(firstValue(item, keys...))
+}
+
+func firstExistingWithKey(item map[string]any, keys ...string) (string, string) {
+	for _, key := range keys {
+		if value, exists := item[key]; exists {
+			return key, stringValue(value)
+		}
+	}
+	return "", ""
 }
 
 func firstValue(item map[string]any, keys ...string) any {
@@ -216,6 +266,64 @@ func stringValue(value any) string {
 	default:
 		return fmt.Sprint(typed)
 	}
+}
+
+func intValue(value any) int {
+	switch typed := value.(type) {
+	case json.Number:
+		integer, _ := typed.Int64()
+		return int(integer)
+	case float64:
+		return int(typed)
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case string:
+		integer, _ := strconv.Atoi(typed)
+		return integer
+	default:
+		return 0
+	}
+}
+
+func splitFilename(value string) (string, string, bool) {
+	parts := strings.SplitN(value, " - ", 2)
+	if len(parts) != 2 {
+		return "", "", false
+	}
+	artist := strings.TrimSpace(parts[0])
+	name := strings.TrimSpace(parts[1])
+	return artist, name, artist != "" && name != ""
+}
+
+func singerNames(value any) string {
+	items, ok := value.([]any)
+	if !ok {
+		return ""
+	}
+	names := make([]string, 0, len(items))
+	for _, raw := range items {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := strings.TrimSpace(stringValue(item["name"]))
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	return strings.Join(names, "、")
+}
+
+func albumName(item map[string]any) string {
+	if album := strings.TrimSpace(firstExisting(item, "album_name", "albumname", "album")); album != "" {
+		return album
+	}
+	if info, ok := item["albuminfo"].(map[string]any); ok {
+		return strings.TrimSpace(stringValue(info["name"]))
+	}
+	return ""
 }
 
 func formatDuration(value any) string {

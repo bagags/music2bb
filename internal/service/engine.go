@@ -58,14 +58,26 @@ func (e *Engine) ParsePlaylist(ctx context.Context, rawURL string, opts ParseOpt
 	}
 	updates := serial(observer, e.now)
 	updates.emit(ProgressEvent{Kind: EventProgress, Operation: "parse_playlist", Message: "正在解析酷狗歌单"})
-	songs, err := e.playlist.ParsePlaylist(ctx, rawURL, opts.BrowserPolicy)
+	result, err := e.playlist.ParsePlaylist(ctx, rawURL, opts.BrowserPolicy)
 	if err != nil {
 		return nil, classifyContext("parse playlist", ErrorExtraction, err)
 	}
+	songs := result.Songs
 	if len(songs) == 0 {
 		return nil, &OperationError{Category: ErrorExtraction, Operation: "parse playlist", Message: "未能提取歌曲"}
 	}
-	updates.emit(ProgressEvent{Kind: EventProgress, Operation: "parse_playlist", Message: "歌单解析完成", Current: len(songs), Total: len(songs)})
+	total := result.ExpectedTotal
+	if total <= 0 {
+		total = len(songs)
+	}
+	if result.ExpectedTotal > len(songs) {
+		updates.emit(ProgressEvent{
+			Kind: EventWarning, Operation: "parse_playlist",
+			Message: fmt.Sprintf("警告：歌单抓取不完整，实际 %d / 预期 %d 首；将继续处理已获取歌曲", len(songs), result.ExpectedTotal),
+			Current: len(songs), Total: result.ExpectedTotal,
+		})
+	}
+	updates.emit(ProgressEvent{Kind: EventProgress, Operation: "parse_playlist", Message: "歌单解析完成", Current: len(songs), Total: total})
 	return append([]model.Song(nil), songs...), nil
 }
 

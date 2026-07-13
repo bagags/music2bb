@@ -215,8 +215,17 @@ const extractSongsJS = `() => {
     if (Array.isArray(value)) {
       for (const item of value) {
         if (item && typeof item === 'object') {
-          add(item.songname || item.name || item.title || item.songName || item.FileName,
-              item.singername || item.author || item.artist || item.singerName);
+          let name = item.songname || item.name || item.title || item.songName || item.filename || item.FileName;
+          let artist = item.singername || item.author || item.artist || item.singerName;
+          if (!artist && Array.isArray(item.singerinfo)) {
+            artist = item.singerinfo.map((singer) => singer && singer.name).filter(Boolean).join('、');
+          }
+          if ((item.filename || item.FileName || item.singerinfo) && String(name || '').includes(' - ')) {
+            const parts = String(name).split(' - ');
+            if (!artist) artist = parts.shift().trim(); else parts.shift();
+            name = parts.join(' - ').trim();
+          }
+          add(name, artist);
           walk(item, depth + 1, visited);
         }
       }
@@ -257,7 +266,7 @@ const extractSongsJS = `() => {
         artist = parts.join(' - ').trim();
       }
     }
-    if (!/[、,&/，]/.test(name)) add(name, artist);
+    add(name, artist);
   }
   return JSON.stringify(results);
 }`

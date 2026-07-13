@@ -3,9 +3,11 @@ package kugou
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -166,12 +168,12 @@ func TestPlaylistID(t *testing.T) {
 
 func TestDefaultAPIEndpointOrder(t *testing.T) {
 	want := []APIEndpoint{
+		{URL: "https://mobileservice.kugou.com/api/v3/special/song", Parameters: true, Paginated: true},
 		{URL: "https://www.kugou.com/yy/special/song/sid={playlist_id}", Method: http.MethodPost},
 		{URL: "https://mobileservice.kugou.com/api/v3/plist/speciallist", Parameters: true},
 		{URL: "https://mobileservice.kugou.com/api/v3/plist/list", Parameters: true},
 		{URL: "https://m.kugou.com/plist/list/{playlist_id}"},
 		{URL: "https://wwwapi.kugou.com/playlist/detail/{playlist_id}"},
-		{URL: "https://mobileservice.kugou.com/api/v3/special/song", Parameters: true},
 	}
 	if got := defaultAPIEndpoints(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("defaultAPIEndpoints = %#v, want %#v", got, want)
@@ -218,6 +220,128 @@ func TestDecodeSongResponseNestedShapes(t *testing.T) {
 	}
 }
 
+func TestPaginatedAPIParsesFilenameAndDeclaredTotal(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/share" {
+			http.Redirect(w, r, "/resolved?specialid=42", http.StatusFound)
+			return
+		}
+		if r.URL.Path != "/api" {
+			w.Write([]byte("<html></html>"))
+			return
+		}
+		page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+		start, count := 0, 20
+		if page == 2 {
+			start, count = 20, 10
+		}
+		items := make([]map[string]any, 0, count)
+		for index := start; index < start+count; index++ {
+			items = append(items, map[string]any{
+				"filename": fmt.Sprintf("Artist %02d - Song %02d", index, index),
+				"hash":     fmt.Sprintf("hash-%02d", index),
+				"duration": 180,
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"total": 30, "info": items}})
+	}))
+	defer server.Close()
+
+	client := newTestClient(t, server, nil, APIEndpoint{URL: server.URL + "/api", Parameters: true, Paginated: true})
+	result, err := client.ParsePlaylistResult(context.Background(), server.URL+"/share")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Songs) != 30 || result.ExpectedTotal != 30 {
+		t.Fatalf("result = %d/%d, want 30/30", len(result.Songs), result.ExpectedTotal)
+	}
+	if result.Songs[0].Name != "Song 00" || result.Songs[0].Artist != "Artist 00" {
+		t.Fatalf("first song = %#v", result.Songs[0])
+	}
+}
+
+func TestSignedCollectionPaginationReturnsAll109Songs(t *testing.T) {
+	fixedNow := time.UnixMilli(1_700_000_000_123)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/share" {
+			http.Redirect(w, r, "/resolved?specialid=-2147483648&global_specialid=collection-test", http.StatusFound)
+			return
+		}
+		if r.URL.Path == "/resolved" {
+			w.Write([]byte("<html></html>"))
+			return
+		}
+		if r.URL.Path != "/collection" {
+			http.NotFound(w, r)
+			return
+		}
+		query := r.URL.Query()
+		wantSignature := collectionParams("collection-test", mustAtoi(t, query.Get("page")), collectionPageSize, fixedNow).Get("signature")
+		if query.Get("signature") != wantSignature || query.Get("global_collection_id") != "collection-test" {
+			t.Errorf("invalid signed query: %v", query)
+		}
+		page := mustAtoi(t, query.Get("page"))
+		start, count := 0, 100
+		if page == 2 {
+			start, count = 100, 9
+		}
+		items := make([]map[string]any, 0, count)
+		for index := start; index < start+count; index++ {
+			items = append(items, map[string]any{
+				"name":       fmt.Sprintf("Singer %03d - Song %03d & Mix", index, index),
+				"hash":       fmt.Sprintf("HASH%03d", index),
+				"timelen":    185000,
+				"singerinfo": []map[string]any{{"name": fmt.Sprintf("Singer %03d", index)}},
+			})
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"status": 1, "data": map[string]any{"count": 109, "info": items}})
+	}))
+	defer server.Close()
+
+	httpClient := netx.New(time.Second, 2, nil)
+	httpClient.HTTP = server.Client()
+	httpClient.MaxAttempts = 1
+	client := New(httpClient, nil,
+		WithAPIEndpoints(nil),
+		WithCollectionEndpoint(server.URL+"/collection"),
+		WithNow(func() time.Time { return fixedNow }),
+	)
+	result, err := client.ParsePlaylistResult(context.Background(), server.URL+"/share")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Songs) != 109 || result.ExpectedTotal != 109 {
+		t.Fatalf("result = %d/%d, want 109/109", len(result.Songs), result.ExpectedTotal)
+	}
+	if result.Songs[0].Name != "Song 000 & Mix" || result.Songs[0].Artist != "Singer 000" {
+		t.Fatalf("first song = %#v", result.Songs[0])
+	}
+}
+
+func TestCollectionParamsMatchesCurrentH5Signature(t *testing.T) {
+	params := collectionParams("collection-test", 1, 100, time.UnixMilli(1_700_000_000_123))
+	if got, want := params.Get("signature"), "e8e71dac95600a621cc3b9c1057b7e29"; got != want {
+		t.Fatalf("signature = %q, want %q", got, want)
+	}
+}
+
+func TestExtractionHelpersPreserveExpectedTotalAndCrossSourceDeduplication(t *testing.T) {
+	result := betterResult(
+		ParseResult{Songs: []model.Song{{Name: "API"}}, ExpectedTotal: 109},
+		ParseResult{Songs: []model.Song{{Name: "One"}, {Name: "Two"}}},
+	)
+	if len(result.Songs) != 2 || result.ExpectedTotal != 109 {
+		t.Fatalf("betterResult = %#v", result)
+	}
+	merged := mergeSongs(
+		[]model.Song{{Name: "Same", Artist: "Singer", Hash: "ABC"}},
+		[]model.Song{{Name: "Same", Artist: "Singer"}, {Name: "Other", Artist: "Singer"}},
+	)
+	if len(merged) != 2 || merged[1].Name != "Other" {
+		t.Fatalf("mergeSongs = %#v", merged)
+	}
+}
+
 func TestExtractEmbeddedSongs(t *testing.T) {
 	tests := []struct {
 		name string
@@ -238,7 +362,7 @@ func TestExtractEmbeddedSongs(t *testing.T) {
 	}
 }
 
-func TestCleanupSongsPythonParity(t *testing.T) {
+func TestCleanupSongsRetainsValidTitlePunctuation(t *testing.T) {
 	input := []model.Song{
 		{Name: "Keep", Artist: "Singer"},
 		{Name: "Keep"},
@@ -250,12 +374,22 @@ func TestCleanupSongsPythonParity(t *testing.T) {
 	}
 	want := []model.Song{
 		{Name: "Keep", Artist: "Singer"},
+		{Name: "Duet/A", Artist: "Singer"},
 		{Name: "Duplicate", Artist: "One"},
 		{Name: "Duplicate", Artist: "Two"},
 	}
 	if got := CleanupSongs(input); !reflect.DeepEqual(got, want) {
 		t.Fatalf("CleanupSongs = %#v, want %#v", got, want)
 	}
+}
+
+func mustAtoi(t *testing.T, value string) int {
+	t.Helper()
+	number, err := strconv.Atoi(value)
+	if err != nil {
+		t.Fatalf("Atoi(%q): %v", value, err)
+	}
+	return number
 }
 
 type stubExtractor struct {
@@ -274,7 +408,7 @@ func newTestClient(t *testing.T, server *httptest.Server, browser Extractor, end
 	httpClient := netx.New(time.Second, 2, nil)
 	httpClient.HTTP = server.Client()
 	httpClient.MaxAttempts = 1
-	options := []Option{WithAPIEndpoints(endpoints)}
+	options := []Option{WithAPIEndpoints(endpoints), WithCollectionEndpoint(server.URL + "/collection")}
 	return New(httpClient, browser, options...)
 }
 

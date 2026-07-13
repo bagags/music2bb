@@ -22,6 +22,11 @@ type ParseOptions struct {
 	BrowserPolicy BrowserPolicy
 }
 
+type PlaylistResult struct {
+	Songs         []model.Song
+	ExpectedTotal int
+}
+
 type BrowserPolicy string
 
 const (
@@ -81,7 +86,7 @@ type LoginUpdate struct {
 }
 
 type PlaylistClient interface {
-	ParsePlaylist(ctx context.Context, rawURL string, policy BrowserPolicy) ([]model.Song, error)
+	ParsePlaylist(ctx context.Context, rawURL string, policy BrowserPolicy) (PlaylistResult, error)
 }
 
 type MatchClient interface {

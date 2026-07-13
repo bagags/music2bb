@@ -5,6 +5,7 @@ package kugou
 import (
 	"context"
 	"os"
+	"strconv"
 	"testing"
 	"time"
 
@@ -26,5 +27,14 @@ func TestLiveDirectExtraction(t *testing.T) {
 	}
 	if len(songs) == 0 {
 		t.Fatal("live direct extraction returned no songs")
+	}
+	if rawCount := os.Getenv("MUSIC2BB_TEST_KUGOU_COUNT"); rawCount != "" {
+		expected, err := strconv.Atoi(rawCount)
+		if err != nil {
+			t.Fatalf("invalid MUSIC2BB_TEST_KUGOU_COUNT: %v", err)
+		}
+		if len(songs) != expected {
+			t.Fatalf("live direct extraction returned %d songs, want %d", len(songs), expected)
+		}
 	}
 }

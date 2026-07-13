@@ -6,8 +6,8 @@ import (
 	"github.com/gguage/music-to-bb/internal/model"
 )
 
-// CleanupSongs mirrors the Python phantom-entry cleanup exactly: comparisons
-// and de-duplication are case-sensitive and preserve the first input entry.
+// CleanupSongs removes browser phantom entries and exact duplicates while
+// preserving punctuation that is valid inside real song titles.
 func CleanupSongs(songs []model.Song) []model.Song {
 	if len(songs) == 0 {
 		return songs
@@ -33,10 +33,7 @@ func CleanupSongs(songs []model.Song) []model.Song {
 				continue
 			}
 		}
-		if strings.ContainsAny(song.Name, "、,&/，") {
-			continue
-		}
-		key := song.Name + "|" + song.Artist
+		key := songIdentity(song)
 		if _, duplicate := seen[key]; duplicate {
 			continue
 		}

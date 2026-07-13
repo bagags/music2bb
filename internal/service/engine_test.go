@@ -12,10 +12,13 @@ import (
 	"github.com/gguage/music-to-bb/internal/model"
 )
 
-type fakePlaylist struct{ songs []model.Song }
+type fakePlaylist struct {
+	songs    []model.Song
+	expected int
+}
 
-func (f fakePlaylist) ParsePlaylist(context.Context, string, BrowserPolicy) ([]model.Song, error) {
-	return f.songs, nil
+func (f fakePlaylist) ParsePlaylist(context.Context, string, BrowserPolicy) (PlaylistResult, error) {
+	return PlaylistResult{Songs: f.songs, ExpectedTotal: f.expected}, nil
 }
 
 type fakeRemote struct {
@@ -114,6 +117,33 @@ func TestMatchBoundsWorkersAndPreservesOrder(t *testing.T) {
 		if len(outcome.Candidates) != 1 || !outcome.HasSelection {
 			t.Fatalf("outcome %d did not retain/select candidates: %#v", index, outcome)
 		}
+	}
+}
+
+func TestParsePlaylistWarnsAndContinuesWhenIncomplete(t *testing.T) {
+	remote := &fakeRemote{}
+	engine, err := New(Dependencies{
+		Playlist: fakePlaylist{songs: []model.Song{{Name: "one", Artist: "artist"}}, expected: 109},
+		Match:    remote, Account: remote, Matcher: fakeMatcher{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var events []ProgressEvent
+	songs, err := engine.ParsePlaylist(context.Background(), "https://example.test/list", ParseOptions{}, ObserverFunc(func(event ProgressEvent) {
+		events = append(events, event)
+	}))
+	if err != nil || len(songs) != 1 {
+		t.Fatalf("ParsePlaylist = %#v, %v", songs, err)
+	}
+	found := false
+	for _, event := range events {
+		if event.Kind == EventWarning && event.Current == 1 && event.Total == 109 {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing incomplete warning: %#v", events)
 	}
 }
 
