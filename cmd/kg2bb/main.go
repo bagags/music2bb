@@ -6,8 +6,8 @@ import (
 	"os"
 	"os/signal"
 
+	kg2bb "github.com/gguage/music-to-bb"
 	"github.com/gguage/music-to-bb/internal/cli"
-	"github.com/gguage/music-to-bb/pkg/kg2bb"
 	"golang.org/x/term"
 )
 

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gguage/music-to-bb/pkg/kg2bb"
+	kg2bb "github.com/gguage/music-to-bb"
 )
 
 func (a *App) runLogin(ctx context.Context, args []string) int {

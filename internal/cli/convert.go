@@ -8,7 +8,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gguage/music-to-bb/pkg/kg2bb"
+	kg2bb "github.com/gguage/music-to-bb"
 )
 
 type convertOptions struct {

@@ -12,7 +12,7 @@
 - 默认 4 个受限并发 worker，保持输入与结果顺序
 - 自动匹配、候选审核、完全手动匹配和 BV 号覆盖
 - 可取消操作、稳定退出码、结构化部分失败结果
-- `pkg/kg2bb` 提供无终端依赖、可注入、适合未来 Go GUI 的公共 API
+- 模块根包 `kg2bb` 提供无终端依赖、可注入、适合未来 Go GUI 的公共 API
 
 ## 安装
 
@@ -117,6 +117,8 @@ kg2bb browser clear
 CLI 只通过公共包调用后端：
 
 ```go
+import kg2bb "github.com/gguage/music-to-bb"
+
 engine, err := kg2bb.New(kg2bb.Config{})
 if err != nil {
     return err
@@ -126,7 +128,7 @@ defer engine.Close()
 songs, err := engine.ParsePlaylist(ctx, kugouURL, observer)
 ```
 
-`pkg/kg2bb` 暴露上下文感知的登录、解析、匹配、搜索、收藏夹和浏览器操作，以及序列化观察者、类型化错误和测试依赖注入。非公开站点协议保留在 `internal` 包中。
+模块根包 `kg2bb` 暴露上下文感知的登录、解析、匹配、搜索、收藏夹和浏览器操作，以及序列化观察者、类型化错误和测试依赖注入。非公开站点协议保留在 `internal` 包中。项目的包职责和依赖方向见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 测试
 
