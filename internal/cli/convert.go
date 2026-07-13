@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"sort"
@@ -120,12 +121,16 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 				return ExitCancelled
 			}
 		}
-		if options.manualReview {
+		needsReview := hasRequiredReviews(outcomes)
+		if options.manualReview || needsReview {
 			if !a.IO.Interactive {
-				fmt.Fprintln(a.IO.Err, "--manual-review 需要交互式终端")
-				return ExitInvalidInput
+				if options.manualReview {
+					fmt.Fprintln(a.IO.Err, "--manual-review 需要交互式终端")
+					return ExitInvalidInput
+				}
+			} else {
+				outcomes = a.reviewMatches(ctx, outcomes, options.manualReview)
 			}
-			outcomes = a.reviewMatches(ctx, outcomes)
 		}
 	}
 
@@ -143,6 +148,10 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 
 	favorite, err := a.selectFavorite(ctx, options.favorite)
 	if err != nil {
+		if errors.Is(err, errFavoriteSelectionCancelled) {
+			fmt.Fprintln(a.IO.Out, "已取消")
+			return ExitSuccess
+		}
 		fmt.Fprintf(a.IO.Err, "选择收藏夹失败: %v\n", err)
 		return exitFor(err)
 	}
@@ -205,9 +214,9 @@ func (a *App) manualMatch(ctx context.Context, song music2bb.Song) music2bb.Matc
 	if !a.IO.Interactive {
 		return outcome
 	}
-	query, _ := a.ask(fmt.Sprintf("手动匹配 %s - %s，搜索关键词 [%s]: ", song.Name, song.Artist, song.SearchKeyword()))
+	query, _ := a.ask(fmt.Sprintf("手动匹配 %s - %s，搜索关键词 [%s]: ", song.Name, song.Artist, song.SearchKeywordFull()))
 	if query == "" {
-		query = song.SearchKeyword()
+		query = song.SearchKeywordFull()
 	}
 	candidates, err := a.Backend.SearchCandidates(ctx, song, query, 10)
 	if err != nil {
@@ -243,8 +252,11 @@ func (a *App) manualMatch(ctx context.Context, song music2bb.Song) music2bb.Matc
 	return outcome
 }
 
-func (a *App) reviewMatches(ctx context.Context, outcomes []music2bb.MatchResult) []music2bb.MatchResult {
+func (a *App) reviewMatches(ctx context.Context, outcomes []music2bb.MatchResult, reviewAll bool) []music2bb.MatchResult {
 	for index := range outcomes {
+		if !reviewAll && !outcomes[index].NeedsReview {
+			continue
+		}
 		for candidateIndex, candidate := range outcomes[index].Candidates {
 			if candidate.Video != nil {
 				fmt.Fprintf(a.IO.Out, "  %d. %s - %s (%.1f)\n", candidateIndex+1, candidate.Video.Title, candidate.Video.Uploader, candidate.Score)
@@ -261,6 +273,7 @@ func (a *App) reviewMatches(ctx context.Context, outcomes []music2bb.MatchResult
 			candidate.HasSelection = candidate.Video != nil
 			candidate.Matched = candidate.HasSelection
 			candidate.ManualOverride = candidate.HasSelection
+			candidate.NeedsReview = false
 			candidate.Candidates = outcomes[index].Candidates
 			outcomes[index] = candidate
 			continue
@@ -269,6 +282,7 @@ func (a *App) reviewMatches(ctx context.Context, outcomes []music2bb.MatchResult
 		if accept {
 			manual := a.manualMatch(ctx, outcomes[index].Song)
 			if manual.HasSelection {
+				manual.NeedsReview = false
 				outcomes[index] = manual
 			}
 		}
@@ -276,38 +290,102 @@ func (a *App) reviewMatches(ctx context.Context, outcomes []music2bb.MatchResult
 	return outcomes
 }
 
-func (a *App) selectFavorite(ctx context.Context, selector string) (music2bb.Favorite, error) {
-	favorites, err := a.Backend.ListFavorites(ctx)
-	if err != nil {
-		return music2bb.Favorite{}, err
-	}
-	if selector != "" {
-		if id, ok := parseInt64(selector); ok {
-			for _, favorite := range favorites {
-				if favorite.ID == id {
-					return favorite, nil
-				}
-			}
-		} else {
-			for _, favorite := range favorites {
-				if favorite.Title == selector {
-					return favorite, nil
-				}
-			}
+func hasRequiredReviews(outcomes []music2bb.MatchResult) bool {
+	for _, outcome := range outcomes {
+		if outcome.NeedsReview {
+			return true
 		}
-		return music2bb.Favorite{}, &music2bb.Error{Category: music2bb.ErrorInvalidInput, Operation: "select favorite", Message: "未找到指定收藏夹"}
 	}
-	if !a.IO.Interactive {
-		return music2bb.Favorite{}, &music2bb.Error{Category: music2bb.ErrorInvalidInput, Operation: "select favorite", Message: "非交互模式需要 --favorite"}
+	return false
+}
+
+var errFavoriteSelectionCancelled = errors.New("favorite selection cancelled")
+
+func (a *App) selectFavorite(ctx context.Context, selector string) (music2bb.Favorite, error) {
+	for {
+		favorites, err := a.Backend.ListFavorites(ctx)
+		if err != nil {
+			if !a.IO.Interactive {
+				return music2bb.Favorite{}, err
+			}
+			fmt.Fprintf(a.IO.Err, "获取收藏夹失败: %v\n", err)
+			answer, askErr := a.ask("重试获取收藏夹? [Y/n] ")
+			if askErr != nil || strings.EqualFold(answer, "n") {
+				return music2bb.Favorite{}, err
+			}
+			continue
+		}
+		if selector != "" {
+			if id, ok := parseInt64(selector); ok {
+				for _, favorite := range favorites {
+					if favorite.ID == id {
+						return favorite, nil
+					}
+				}
+			} else {
+				for _, favorite := range favorites {
+					if favorite.Title == selector {
+						return favorite, nil
+					}
+				}
+			}
+			if !a.IO.Interactive {
+				return music2bb.Favorite{}, &music2bb.Error{Category: music2bb.ErrorInvalidInput, Operation: "select favorite", Message: "未找到指定收藏夹"}
+			}
+			fmt.Fprintf(a.IO.Err, "未找到收藏夹「%s」，请重新选择\n", selector)
+			selector = ""
+		}
+		if !a.IO.Interactive {
+			return music2bb.Favorite{}, &music2bb.Error{Category: music2bb.ErrorInvalidInput, Operation: "select favorite", Message: "非交互模式需要 --favorite"}
+		}
+		sort.Slice(favorites, func(i, j int) bool { return favorites[i].ID < favorites[j].ID })
+		fmt.Fprintln(a.IO.Out, "0. 新建收藏夹")
+		for index, favorite := range favorites {
+			fmt.Fprintf(a.IO.Out, "%d. %s (%d)\n", index+1, favorite.Title, favorite.MediaCount)
+		}
+		choice, askErr := a.ask("选择收藏夹序号（q 取消）: ")
+		if askErr != nil || strings.EqualFold(choice, "q") {
+			return music2bb.Favorite{}, errFavoriteSelectionCancelled
+		}
+		selected, parseErr := strconv.Atoi(choice)
+		if parseErr != nil || selected < 0 || selected > len(favorites) {
+			fmt.Fprintln(a.IO.Err, "无效收藏夹序号，请重新选择")
+			continue
+		}
+		if selected == 0 {
+			favorite, created, createErr := a.createFavoriteInline(ctx)
+			if createErr != nil {
+				fmt.Fprintf(a.IO.Err, "创建收藏夹失败: %v\n", createErr)
+				continue
+			}
+			if created {
+				return favorite, nil
+			}
+			continue
+		}
+		return favorites[selected-1], nil
 	}
-	sort.Slice(favorites, func(i, j int) bool { return favorites[i].ID < favorites[j].ID })
-	for index, favorite := range favorites {
-		fmt.Fprintf(a.IO.Out, "%d. %s (%d)\n", index+1, favorite.Title, favorite.MediaCount)
+}
+
+func (a *App) createFavoriteInline(ctx context.Context) (music2bb.Favorite, bool, error) {
+	title, err := a.ask("收藏夹名称（留空返回）: ")
+	if err != nil || title == "" {
+		return music2bb.Favorite{}, false, nil
 	}
-	choice, _ := a.ask("选择收藏夹序号: ")
-	selected, parseErr := strconv.Atoi(choice)
-	if parseErr != nil || selected < 1 || selected > len(favorites) {
-		return music2bb.Favorite{}, &music2bb.Error{Category: music2bb.ErrorInvalidInput, Operation: "select favorite", Message: "无效收藏夹序号"}
+	intro, err := a.ask("简介（可留空）: ")
+	if err != nil {
+		return music2bb.Favorite{}, false, err
 	}
-	return favorites[selected-1], nil
+	privateAnswer, err := a.ask("设为仅自己可见? [y/N] ")
+	if err != nil {
+		return music2bb.Favorite{}, false, err
+	}
+	favorite, err := a.Backend.CreateFavorite(ctx, music2bb.CreateFavoriteRequest{
+		Title: strings.TrimSpace(title), Intro: intro, Private: strings.EqualFold(privateAnswer, "y"),
+	})
+	if err != nil {
+		return music2bb.Favorite{}, false, err
+	}
+	fmt.Fprintf(a.IO.Out, "已创建收藏夹「%s」\n", favorite.Title)
+	return favorite, true, nil
 }

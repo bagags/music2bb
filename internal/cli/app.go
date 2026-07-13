@@ -165,6 +165,9 @@ func parseInt64(value string) (int64, bool) {
 func (a *App) ask(prompt string) (string, error) {
 	fmt.Fprint(a.IO.Out, prompt)
 	line, err := a.reader.ReadString('\n')
+	if errors.Is(err, io.EOF) && line == "" {
+		return "", io.EOF
+	}
 	if err != nil && !errors.Is(err, io.EOF) {
 		return "", err
 	}
