@@ -10,33 +10,25 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gguage/music-to-bb/internal/model"
-	"github.com/gguage/music-to-bb/internal/service"
+	"github.com/gguage/music-to-bb/pkg/kg2bb"
 	qrcode "github.com/skip2/go-qrcode"
 )
 
 type Backend interface {
-	Login(context.Context, service.LoginOptions, service.Observer) (service.Account, error)
-	ParsePlaylist(context.Context, string, service.ParseOptions, service.Observer) ([]model.Song, error)
-	Match(context.Context, []model.Song, service.MatchOptions, service.Observer) ([]service.MatchOutcome, error)
-	SearchCandidates(context.Context, model.Song, string, int) ([]model.MatchResult, error)
-	VideoDetail(context.Context, string) (model.Video, error)
-	ListFavorites(context.Context) ([]model.Favorite, error)
-	CreateFavorite(context.Context, service.CreateFavoriteRequest) (model.Favorite, error)
-	AddToFavorite(context.Context, int64, []service.MatchOutcome, service.Observer) (service.AddResult, error)
+	LoginWithOptions(context.Context, kg2bb.LoginOptions, kg2bb.Observer) (kg2bb.Account, error)
+	ParsePlaylistWithOptions(context.Context, string, kg2bb.ParseOptions, kg2bb.Observer) ([]kg2bb.Song, error)
+	Match(context.Context, []kg2bb.Song, kg2bb.MatchOptions, kg2bb.Observer) ([]kg2bb.MatchResult, error)
+	SearchCandidates(context.Context, kg2bb.Song, string, int) ([]kg2bb.MatchResult, error)
+	VideoDetail(context.Context, string) (kg2bb.Video, error)
+	ListFavorites(context.Context) ([]kg2bb.Favorite, error)
+	CreateFavorite(context.Context, kg2bb.CreateFavoriteRequest) (kg2bb.Favorite, error)
+	AddToFavorite(context.Context, int64, []kg2bb.MatchResult, kg2bb.Observer) (kg2bb.AddResult, error)
 }
 
 type BrowserManager interface {
-	Status(context.Context) (BrowserStatus, error)
-	Install(context.Context, bool) (BrowserStatus, error)
+	Status(context.Context) (kg2bb.BrowserStatus, error)
+	Install(context.Context, bool) (kg2bb.BrowserStatus, error)
 	Clear(context.Context) error
-}
-
-type BrowserStatus struct {
-	Installed bool
-	Revision  string
-	Path      string
-	Verified  bool
 }
 
 type IO struct {
@@ -115,15 +107,15 @@ func (a *App) printHelp() {
   kg2bb version`)
 }
 
-func (a *App) observer(verbose bool) service.Observer {
-	return service.ObserverFunc(func(event service.ProgressEvent) {
+func (a *App) observer(verbose bool) kg2bb.Observer {
+	return kg2bb.ObserverFunc(func(event kg2bb.ProgressEvent) {
 		switch event.Kind {
-		case service.EventQR:
+		case kg2bb.EventQR:
 			fmt.Fprintln(a.IO.Out, "请使用 Bilibili 客户端扫描二维码:")
 			fmt.Fprint(a.IO.Out, renderQR(event.QRPayload))
-		case service.EventWarning:
+		case kg2bb.EventWarning:
 			fmt.Fprintln(a.IO.Err, event.Message)
-		case service.EventSong:
+		case kg2bb.EventSong:
 			if event.Song != nil {
 				if event.Match != nil && event.Match.Video != nil {
 					fmt.Fprintf(a.IO.Out, "[%d/%d] ✓ %s → %s\n", event.Current, event.Total, event.Song.Name, event.Match.Video.Title)

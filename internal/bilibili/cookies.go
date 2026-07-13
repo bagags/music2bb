@@ -97,26 +97,18 @@ func (j *persistentJar) snapshot() []CookieRecord {
 }
 
 func (c *Client) HasCookies() bool {
-	if c.cookieFile == "" {
-		return false
-	}
-	info, err := os.Stat(c.cookieFile)
-	return err == nil && !info.IsDir()
+	return c != nil && c.cookieStore != nil && c.cookieStore.Exists()
 }
 
 func (c *Client) LoadCookies() (bool, error) {
-	if c.cookieFile == "" {
+	if c.cookieStore == nil {
 		return false, ErrNoCookieFile
 	}
-	data, err := os.ReadFile(c.cookieFile)
-	if errors.Is(err, os.ErrNotExist) {
+	records, err := c.cookieStore.Load()
+	if errors.Is(err, ErrNoCookieFile) || errors.Is(err, os.ErrNotExist) {
 		return false, ErrNoCookieFile
 	}
 	if err != nil {
-		return false, err
-	}
-	var records []CookieRecord
-	if err := json.Unmarshal(data, &records); err != nil {
 		return false, err
 	}
 	home, err := url.Parse(c.endpoints.Home)
@@ -131,18 +123,55 @@ func (c *Client) LoadCookies() (bool, error) {
 }
 
 func (c *Client) SaveCookies() error {
-	if c.cookieFile == "" {
+	if c.cookieStore == nil {
 		return nil
 	}
-	data, err := json.MarshalIndent(c.accountJar.snapshot(), "", "  ")
+	return c.cookieStore.Save(c.accountJar.snapshot())
+}
+
+type fileCookieStore struct {
+	path string
+}
+
+func (s fileCookieStore) Exists() bool {
+	if s.path == "" {
+		return false
+	}
+	info, err := os.Stat(s.path)
+	return err == nil && !info.IsDir()
+}
+
+func (s fileCookieStore) Load() ([]CookieRecord, error) {
+	if s.path == "" {
+		return nil, ErrNoCookieFile
+	}
+	data, err := os.ReadFile(s.path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, ErrNoCookieFile
+	}
+	if err != nil {
+		return nil, err
+	}
+	var records []CookieRecord
+	if err := json.Unmarshal(data, &records); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
+func (s fileCookieStore) Save(records []CookieRecord) error {
+	if s.path == "" {
+		return nil
+	}
+	data, err := json.MarshalIndent(records, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	if err := os.MkdirAll(filepath.Dir(c.cookieFile), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(c.cookieFile), ".cookies-*")
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".cookies-*")
 	if err != nil {
 		return err
 	}
@@ -163,5 +192,5 @@ func (c *Client) SaveCookies() error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(name, c.cookieFile)
+	return os.Rename(name, s.path)
 }

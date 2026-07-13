@@ -13,16 +13,17 @@ import (
 const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36"
 
 type Client struct {
-	endpoints  Endpoints
-	cookieFile string
-	account    *netx.Client
-	search     *netx.Client
-	accountJar *persistentJar
-	searchJar  http.CookieJar
-	now        func() time.Time
-	sleep      netx.Sleeper
-	userAgent  string
-	writeDelay time.Duration
+	endpoints   Endpoints
+	cookieFile  string
+	cookieStore CookieStore
+	account     *netx.Client
+	search      *netx.Client
+	accountJar  *persistentJar
+	searchJar   http.CookieJar
+	now         func() time.Time
+	sleep       netx.Sleeper
+	userAgent   string
+	writeDelay  time.Duration
 
 	fingerprintMu    sync.Mutex
 	fingerprintReady bool
@@ -89,8 +90,12 @@ func New(config Config) (*Client, error) {
 	if userAgent == "" {
 		userAgent = defaultUserAgent
 	}
+	cookieStore := config.CookieStore
+	if cookieStore == nil {
+		cookieStore = fileCookieStore{path: config.CookieFile}
+	}
 	return &Client{
-		endpoints: endpoints, cookieFile: config.CookieFile,
+		endpoints: endpoints, cookieFile: config.CookieFile, cookieStore: cookieStore,
 		account: account, search: search, accountJar: accountJar, searchJar: searchJar,
 		now: now, sleep: sleep, userAgent: userAgent, writeDelay: config.WriteInterval,
 		cache: make(map[searchKey][]model.Video), cacheSize: cacheSize,

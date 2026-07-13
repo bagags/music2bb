@@ -5,6 +5,7 @@ package wiring
 import (
 	"context"
 	"errors"
+	"net/http"
 	"path/filepath"
 	"time"
 
@@ -19,9 +20,19 @@ import (
 )
 
 type Options struct {
-	State         config.Options
-	RatePerSecond float64
-	HTTPTimeout   time.Duration
+	State            config.Options
+	LoadedState      *config.Config
+	RatePerSecond    float64
+	HTTPTimeout      time.Duration
+	Limiter          netx.Limiter
+	KugouHTTP        *http.Client
+	AccountHTTP      *http.Client
+	SearchHTTP       *http.Client
+	Now              func() time.Time
+	Sleep            netx.Sleeper
+	CookieStore      bilibili.CookieStore
+	BrowserManager   *browser.Manager
+	BrowserExtractor kugou.Extractor
 }
 
 type Components struct {
@@ -38,26 +49,52 @@ func (c *Components) Close() {
 }
 
 func New(options Options) (*Components, error) {
-	state, err := config.Load(options.State)
-	if err != nil {
-		return nil, err
+	var state config.Config
+	if options.LoadedState != nil {
+		state = cloneConfig(*options.LoadedState)
+	} else {
+		var err error
+		state, err = config.Load(options.State)
+		if err != nil {
+			return nil, err
+		}
 	}
-	manager, err := browser.NewManager(filepath.Join(state.CacheDir, "browser"))
-	if err != nil {
-		return nil, err
+	manager := options.BrowserManager
+	if manager == nil {
+		var err error
+		manager, err = browser.NewManager(filepath.Join(state.CacheDir, "browser"))
+		if err != nil {
+			return nil, err
+		}
 	}
-	limiter := netx.NewTokenLimiter(options.RatePerSecond, 4)
+	limiter := options.Limiter
+	if limiter == nil {
+		limiter = netx.NewTokenLimiter(options.RatePerSecond, 4)
+	}
 	timeout := options.HTTPTimeout
 	if timeout <= 0 {
 		timeout = 20 * time.Second
 	}
 	kugouHTTP := netx.New(timeout, 8, limiter)
+	if options.KugouHTTP != nil {
+		kugouHTTP.HTTP = options.KugouHTTP
+	}
 	directKugou := kugou.New(kugouHTTP, nil)
-	browserKugou := kugou.New(kugouHTTP, browser.NewExtractor(manager))
+	extractor := options.BrowserExtractor
+	externalBrowser := extractor != nil
+	if extractor == nil {
+		extractor = browser.NewExtractor(manager)
+	}
+	browserKugou := kugou.New(kugouHTTP, extractor)
 	bili, err := bilibili.New(bilibili.Config{
 		CookieFile:    state.CookieFile,
+		CookieStore:   options.CookieStore,
+		AccountHTTP:   options.AccountHTTP,
+		SearchHTTP:    options.SearchHTTP,
 		Limiter:       limiter,
 		Timeout:       timeout,
+		Now:           options.Now,
+		Sleep:         options.Sleep,
 		WriteInterval: 150 * time.Millisecond,
 	})
 	if err != nil {
@@ -71,10 +108,11 @@ func New(options Options) (*Components, error) {
 	})
 	adapter := &bilibiliAdapter{client: bili}
 	engine, err := service.New(service.Dependencies{
-		Playlist: &playlistAdapter{direct: directKugou, browser: browserKugou, manager: manager},
+		Playlist: &playlistAdapter{direct: directKugou, browser: browserKugou, manager: manager, externalBrowser: externalBrowser},
 		Match:    adapter,
 		Account:  adapter,
 		Matcher:  scorer,
+		Now:      options.Now,
 	})
 	if err != nil {
 		bili.CloseIdleConnections()
@@ -92,21 +130,36 @@ func New(options Options) (*Components, error) {
 	}, nil
 }
 
+func cloneConfig(source config.Config) config.Config {
+	source.BlockKeywords = append([]string(nil), source.BlockKeywords...)
+	source.QualityKeywords = append([]string(nil), source.QualityKeywords...)
+	source.WeightedUploaders = append([]string(nil), source.WeightedUploaders...)
+	source.Migration.Copied = append([]string(nil), source.Migration.Copied...)
+	return source
+}
+
 type playlistAdapter struct {
-	direct  *kugou.Client
-	browser *kugou.Client
-	manager *browser.Manager
+	direct          *kugou.Client
+	browser         *kugou.Client
+	manager         *browser.Manager
+	externalBrowser bool
 }
 
 func (a *playlistAdapter) ParsePlaylist(ctx context.Context, rawURL string, policy service.BrowserPolicy) ([]model.Song, error) {
 	client := a.direct
 	switch policy {
 	case "", service.BrowserAuto:
-		if status, err := a.manager.Status(ctx); err == nil && status.Installed {
+		if a.externalBrowser {
+			client = a.browser
+		} else if status, err := a.manager.Status(ctx); err == nil && status.Installed {
 			client = a.browser
 		}
 	case service.BrowserNever:
 	case service.BrowserAlways:
+		if a.externalBrowser {
+			client = a.browser
+			break
+		}
 		status, err := a.manager.Status(ctx)
 		if err != nil {
 			return nil, &service.OperationError{Category: service.ErrorBrowser, Operation: "browser status", Err: err}

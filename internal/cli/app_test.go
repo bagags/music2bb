@@ -7,65 +7,66 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gguage/music-to-bb/internal/model"
-	"github.com/gguage/music-to-bb/internal/service"
+	"github.com/gguage/music-to-bb/pkg/kg2bb"
 )
 
 type fakeBackend struct {
-	loginOpts service.LoginOptions
-	matchOpts service.MatchOptions
-	created   service.CreateFavoriteRequest
+	loginOpts kg2bb.LoginOptions
+	matchOpts kg2bb.MatchOptions
+	created   kg2bb.CreateFavoriteRequest
 	loginErr  error
 }
 
-func (f *fakeBackend) Login(_ context.Context, opts service.LoginOptions, _ service.Observer) (service.Account, error) {
+func (f *fakeBackend) LoginWithOptions(_ context.Context, opts kg2bb.LoginOptions, _ kg2bb.Observer) (kg2bb.Account, error) {
 	f.loginOpts = opts
-	return service.Account{ID: 1, Name: "tester"}, f.loginErr
+	return kg2bb.Account{ID: 1, Name: "tester"}, f.loginErr
 }
 
-func (f *fakeBackend) ParsePlaylist(context.Context, string, service.ParseOptions, service.Observer) ([]model.Song, error) {
-	return []model.Song{{Name: "song", Artist: "artist"}}, nil
+func (f *fakeBackend) ParsePlaylistWithOptions(context.Context, string, kg2bb.ParseOptions, kg2bb.Observer) ([]kg2bb.Song, error) {
+	return []kg2bb.Song{{Name: "song", Artist: "artist"}}, nil
 }
 
-func (f *fakeBackend) Match(_ context.Context, songs []model.Song, opts service.MatchOptions, _ service.Observer) ([]service.MatchOutcome, error) {
+func (f *fakeBackend) Match(_ context.Context, songs []kg2bb.Song, opts kg2bb.MatchOptions, _ kg2bb.Observer) ([]kg2bb.MatchResult, error) {
 	f.matchOpts = opts
-	video := model.Video{BVID: "BV1", Title: "song", Uploader: "artist"}
-	return []service.MatchOutcome{{Song: songs[0], HasSelection: true, Selected: model.MatchResult{Song: songs[0], Video: &video, Matched: true}}}, nil
+	video := kg2bb.Video{BVID: "BV1", Title: "song", Uploader: "artist"}
+	return []kg2bb.MatchResult{{Song: songs[0], HasSelection: true, Video: &video, Matched: true}}, nil
 }
 
-func (f *fakeBackend) SearchCandidates(context.Context, model.Song, string, int) ([]model.MatchResult, error) {
+func (f *fakeBackend) SearchCandidates(context.Context, kg2bb.Song, string, int) ([]kg2bb.MatchResult, error) {
 	return nil, nil
 }
 
-func (f *fakeBackend) VideoDetail(context.Context, string) (model.Video, error) {
-	return model.Video{}, nil
+func (f *fakeBackend) VideoDetail(context.Context, string) (kg2bb.Video, error) {
+	return kg2bb.Video{}, nil
 }
 
-func (f *fakeBackend) ListFavorites(context.Context) ([]model.Favorite, error) {
-	return []model.Favorite{{ID: 9, Title: "target"}}, nil
+func (f *fakeBackend) ListFavorites(context.Context) ([]kg2bb.Favorite, error) {
+	return []kg2bb.Favorite{{ID: 9, Title: "target"}}, nil
 }
 
-func (f *fakeBackend) CreateFavorite(_ context.Context, request service.CreateFavoriteRequest) (model.Favorite, error) {
+func (f *fakeBackend) CreateFavorite(_ context.Context, request kg2bb.CreateFavoriteRequest) (kg2bb.Favorite, error) {
 	f.created = request
-	return model.Favorite{ID: 10, Title: request.Title}, nil
+	return kg2bb.Favorite{ID: 10, Title: request.Title}, nil
 }
 
-func (f *fakeBackend) AddToFavorite(context.Context, int64, []service.MatchOutcome, service.Observer) (service.AddResult, error) {
-	return service.AddResult{FavoriteID: 9, Succeeded: []string{"BV1"}}, nil
+func (f *fakeBackend) AddToFavorite(context.Context, int64, []kg2bb.MatchResult, kg2bb.Observer) (kg2bb.AddResult, error) {
+	return kg2bb.AddResult{FavoriteID: 9, Succeeded: []string{"BV1"}}, nil
 }
 
-type fakeBrowser struct{ status BrowserStatus }
+type fakeBrowser struct{ status kg2bb.BrowserStatus }
 
-func (f fakeBrowser) Status(context.Context) (BrowserStatus, error)        { return f.status, nil }
-func (f fakeBrowser) Install(context.Context, bool) (BrowserStatus, error) { return f.status, nil }
-func (fakeBrowser) Clear(context.Context) error                            { return nil }
+func (f fakeBrowser) Status(context.Context) (kg2bb.BrowserStatus, error) { return f.status, nil }
+func (f fakeBrowser) Install(context.Context, bool) (kg2bb.BrowserStatus, error) {
+	return f.status, nil
+}
+func (fakeBrowser) Clear(context.Context) error { return nil }
 
 func testApp(backend Backend) (*App, *bytes.Buffer, *bytes.Buffer) {
 	out := &bytes.Buffer{}
 	errOut := &bytes.Buffer{}
 	return &App{
 		Backend: backend,
-		Browser: fakeBrowser{status: BrowserStatus{Installed: true, Revision: "1", Verified: true, Path: "/tmp/chrome"}},
+		Browser: fakeBrowser{status: kg2bb.BrowserStatus{Installed: true, Revision: 1, Verified: true, ExecutablePath: "/tmp/chrome"}},
 		IO:      IO{In: strings.NewReader(""), Out: out, Err: errOut},
 		Version: "v1.2.3",
 	}, out, errOut
@@ -78,7 +79,7 @@ func TestCompatibilityAliasAndInterspersedOptions(t *testing.T) {
 	if exit != ExitSuccess {
 		t.Fatalf("exit = %d, stderr=%s", exit, errOut.String())
 	}
-	if backend.matchOpts != (service.MatchOptions{SearchPages: 2, TopK: 5, Workers: 3}) {
+	if backend.matchOpts != (kg2bb.MatchOptions{SearchPages: 2, TopK: 5, Workers: 3}) {
 		t.Fatalf("match options = %#v", backend.matchOpts)
 	}
 	if backend.loginOpts.AllowQR {
@@ -114,7 +115,7 @@ func TestFavoritesCreateAllowsFlagsAfterName(t *testing.T) {
 }
 
 func TestStableExitCategories(t *testing.T) {
-	backend := &fakeBackend{loginErr: &service.OperationError{Category: service.ErrorAuthentication, Operation: "login", Err: errors.New("expired")}}
+	backend := &fakeBackend{loginErr: &kg2bb.Error{Category: kg2bb.ErrorAuthentication, Operation: "login", Err: errors.New("expired")}}
 	app, _, _ := testApp(backend)
 	if exit := app.Run(context.Background(), []string{"convert", "url", "--favorite", "9", "--yes"}); exit != ExitAuthentication {
 		t.Fatalf("exit = %d, want %d", exit, ExitAuthentication)

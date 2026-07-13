@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gguage/music-to-bb/internal/service"
+	"github.com/gguage/music-to-bb/pkg/kg2bb"
 )
 
 func (a *App) runLogin(ctx context.Context, args []string) int {
@@ -30,7 +30,7 @@ func (a *App) runLogin(ctx context.Context, args []string) int {
 	if noQR {
 		allowQR = false
 	}
-	account, err := a.Backend.Login(ctx, service.LoginOptions{UseStoredCookies: true, AllowQR: allowQR, Timeout: 3 * time.Minute}, a.observer(false))
+	account, err := a.Backend.LoginWithOptions(ctx, kg2bb.LoginOptions{UseStoredCookies: true, AllowQR: allowQR, Timeout: 3 * time.Minute}, a.observer(false))
 	if err != nil {
 		fmt.Fprintf(a.IO.Err, "登录失败: %v\n", err)
 		return exitFor(err)
@@ -44,7 +44,7 @@ func (a *App) runFavorites(ctx context.Context, args []string) int {
 		fmt.Fprintln(a.IO.Err, "用法: kg2bb favorites list|create")
 		return ExitInvalidInput
 	}
-	if _, err := a.Backend.Login(ctx, service.LoginOptions{UseStoredCookies: true, AllowQR: a.IO.Interactive}, a.observer(false)); err != nil {
+	if _, err := a.Backend.LoginWithOptions(ctx, kg2bb.LoginOptions{UseStoredCookies: true, AllowQR: a.IO.Interactive}, a.observer(false)); err != nil {
 		fmt.Fprintf(a.IO.Err, "登录失败: %v\n", err)
 		return exitFor(err)
 	}
@@ -86,7 +86,7 @@ func (a *App) runFavorites(ctx context.Context, args []string) int {
 			fmt.Fprintln(a.IO.Err, "用法: kg2bb favorites create <name> [--intro TEXT] [--private]")
 			return ExitInvalidInput
 		}
-		favorite, err := a.Backend.CreateFavorite(ctx, service.CreateFavoriteRequest{Title: strings.TrimSpace(set.Arg(0)), Intro: intro, Private: private})
+		favorite, err := a.Backend.CreateFavorite(ctx, kg2bb.CreateFavoriteRequest{Title: strings.TrimSpace(set.Arg(0)), Intro: intro, Private: private})
 		if err != nil {
 			fmt.Fprintf(a.IO.Err, "创建收藏夹失败: %v\n", err)
 			return exitFor(err)
@@ -126,7 +126,7 @@ func (a *App) runBrowser(ctx context.Context, args []string) int {
 			fmt.Fprintln(a.IO.Out, "not installed")
 			return ExitSuccess
 		}
-		fmt.Fprintf(a.IO.Out, "installed\trevision=%s\tverified=%t\tpath=%s\n", status.Revision, status.Verified, status.Path)
+		fmt.Fprintf(a.IO.Out, "installed\trevision=%d\tverified=%t\tpath=%s\n", status.Revision, status.Verified, status.ExecutablePath)
 		return ExitSuccess
 	case "install":
 		allow := true // The explicit install command is non-interactive approval.
@@ -144,7 +144,7 @@ func (a *App) runBrowser(ctx context.Context, args []string) int {
 			fmt.Fprintf(a.IO.Err, "浏览器安装失败: %v\n", err)
 			return ExitExtraction
 		}
-		fmt.Fprintf(a.IO.Out, "installed\trevision=%s\tverified=%t\tpath=%s\n", status.Revision, status.Verified, status.Path)
+		fmt.Fprintf(a.IO.Out, "installed\trevision=%d\tverified=%t\tpath=%s\n", status.Revision, status.Verified, status.ExecutablePath)
 		return ExitSuccess
 	case "clear":
 		if err := a.Browser.Clear(ctx); err != nil {

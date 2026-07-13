@@ -3,7 +3,7 @@ package cli
 import (
 	"errors"
 
-	"github.com/gguage/music-to-bb/internal/service"
+	"github.com/gguage/music-to-bb/pkg/kg2bb"
 )
 
 const (
@@ -22,24 +22,24 @@ func exitFor(err error) int {
 	if err == nil {
 		return ExitSuccess
 	}
-	var batch *service.BatchError
-	if errors.As(err, &batch) && batch.Category == service.ErrorNetwork {
+	var batch *kg2bb.BatchError
+	if errors.As(err, &batch) && batch.Category == kg2bb.ErrorNetwork {
 		return ExitExtraction
 	}
-	switch service.CategoryOf(err) {
-	case service.ErrorInvalidInput:
+	switch kg2bb.CategoryOf(err) {
+	case kg2bb.ErrorInvalidInput:
 		return ExitInvalidInput
-	case service.ErrorAuthentication:
+	case kg2bb.ErrorAuthentication:
 		return ExitAuthentication
-	case service.ErrorExtraction, service.ErrorBrowser, service.ErrorNetwork:
+	case kg2bb.ErrorExtraction, kg2bb.ErrorBrowser, kg2bb.ErrorNetwork:
 		return ExitExtraction
-	case service.ErrorNoMatches:
+	case kg2bb.ErrorNoMatches:
 		return ExitNoMatches
-	case service.ErrorPartialWrite:
+	case kg2bb.ErrorPartialWrite:
 		return ExitPartialWrite
-	case service.ErrorWriteFailed:
+	case kg2bb.ErrorWriteFailed:
 		return ExitWriteFailure
-	case service.ErrorCancelled:
+	case kg2bb.ErrorCancelled:
 		return ExitCancelled
 	default:
 		return ExitInternal

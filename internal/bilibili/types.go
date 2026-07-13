@@ -91,6 +91,7 @@ func (e Endpoints) withDefaults() Endpoints {
 type Config struct {
 	Endpoints     Endpoints
 	CookieFile    string
+	CookieStore   CookieStore
 	AccountHTTP   *http.Client
 	SearchHTTP    *http.Client
 	Limiter       netx.Limiter
@@ -101,6 +102,15 @@ type Config struct {
 	Sleep         netx.Sleeper
 	UserAgent     string
 	WriteInterval time.Duration
+}
+
+// CookieStore allows the reusable engine to persist authentication without
+// coupling callers to the filesystem. Implementations must be safe for
+// sequential Load/Save calls from a Client.
+type CookieStore interface {
+	Load() ([]CookieRecord, error)
+	Save([]CookieRecord) error
+	Exists() bool
 }
 
 type Account struct {
