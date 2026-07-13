@@ -32,6 +32,7 @@ type HTTPDoer interface {
 
 type APIEndpoint struct {
 	URL        string
+	Method     string
 	Parameters bool
 }
 
@@ -62,6 +63,7 @@ func New(httpClient *netx.Client, browser Extractor, options ...Option) *Client 
 
 func defaultAPIEndpoints() []APIEndpoint {
 	return []APIEndpoint{
+		{URL: "https://www.kugou.com/yy/special/song/sid={playlist_id}", Method: http.MethodPost},
 		{URL: "https://mobileservice.kugou.com/api/v3/plist/speciallist", Parameters: true},
 		{URL: "https://mobileservice.kugou.com/api/v3/plist/list", Parameters: true},
 		{URL: "https://m.kugou.com/plist/list/{playlist_id}"},
@@ -180,7 +182,17 @@ func (c *Client) fetchAPI(ctx context.Context, playlistID string) ([]model.Song,
 			query.Set("page", "1")
 			parsed.RawQuery = query.Encode()
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, parsed.String(), nil)
+		method := endpoint.Method
+		if method == "" {
+			method = http.MethodGet
+		}
+		var body io.Reader
+		if method == http.MethodPost {
+			// Kugou's current public endpoint rejects a POST without an explicit
+			// zero-length body (HTTP 411), even though it takes no form fields.
+			body = strings.NewReader("")
+		}
+		req, err := http.NewRequestWithContext(ctx, method, parsed.String(), body)
 		if err != nil {
 			failures = append(failures, err)
 			continue

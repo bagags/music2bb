@@ -166,6 +166,7 @@ func TestPlaylistID(t *testing.T) {
 
 func TestDefaultAPIEndpointOrder(t *testing.T) {
 	want := []APIEndpoint{
+		{URL: "https://www.kugou.com/yy/special/song/sid={playlist_id}", Method: http.MethodPost},
 		{URL: "https://mobileservice.kugou.com/api/v3/plist/speciallist", Parameters: true},
 		{URL: "https://mobileservice.kugou.com/api/v3/plist/list", Parameters: true},
 		{URL: "https://m.kugou.com/plist/list/{playlist_id}"},
@@ -174,6 +175,31 @@ func TestDefaultAPIEndpointOrder(t *testing.T) {
 	}
 	if got := defaultAPIEndpoints(); !reflect.DeepEqual(got, want) {
 		t.Fatalf("defaultAPIEndpoints = %#v, want %#v", got, want)
+	}
+}
+
+func TestCurrentPublicEndpointUsesEmptyPost(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/sid=42" {
+			w.Write([]byte("<html></html>"))
+			return
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %s, want POST", r.Method)
+		}
+		if r.ContentLength != 0 {
+			t.Errorf("content length = %d, want 0", r.ContentLength)
+		}
+		w.Write([]byte(`{"data":[{"songname":"Current","singername":"Singer","duration":185000}]}`))
+	}))
+	defer server.Close()
+	client := newTestClient(t, server, nil, APIEndpoint{URL: server.URL + "/sid={playlist_id}", Method: http.MethodPost})
+	songs, err := client.ParsePlaylist(context.Background(), server.URL+"/?specialid=42")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(songs) != 1 || songs[0].Name != "Current" || songs[0].Duration != "3:05" {
+		t.Fatalf("songs = %#v", songs)
 	}
 }
 

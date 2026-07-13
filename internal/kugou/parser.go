@@ -181,7 +181,7 @@ func songsFromItems(items []any) []model.Song {
 		songs = append(songs, model.Song{
 			Name: name, Artist: artist,
 			Album:    firstExisting(item, "album_name", "albumname", "album"),
-			Duration: formatDuration(firstValue(item, "duration")),
+			Duration: formatDuration(firstValue(item, "duration", "timelength")),
 			Hash:     firstExisting(item, "hash", "320hash", "filehash"),
 		})
 	}
@@ -243,6 +243,12 @@ func formatDuration(value any) string {
 		seconds = integer
 	default:
 		return ""
+	}
+	// The current public Kugou playlist endpoint reports milliseconds while
+	// legacy endpoints report seconds. Values beyond a day cannot reasonably
+	// be seconds for playlist tracks and are normalized to seconds here.
+	if seconds >= 24*60*60 {
+		seconds /= 1000
 	}
 	minutes := seconds / 60
 	remainder := seconds % 60
