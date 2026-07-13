@@ -440,7 +440,25 @@ func extractZip(ctx context.Context, archivePath, destination string) error {
 			continue
 		}
 		if mode&os.ModeSymlink != 0 {
-			return fmt.Errorf("archive symlink %q is not allowed", entry.Name)
+			link, err := readZipEntry(entry, 4096)
+			if err != nil {
+				return fmt.Errorf("read archive symlink %q: %w", entry.Name, err)
+			}
+			linkTarget := filepath.FromSlash(string(link))
+			if filepath.IsAbs(linkTarget) {
+				return fmt.Errorf("unsafe absolute symlink %q", entry.Name)
+			}
+			resolved := filepath.Clean(filepath.Join(filepath.Dir(target), linkTarget))
+			if resolved != destination && !strings.HasPrefix(resolved, destination+string(filepath.Separator)) {
+				return fmt.Errorf("unsafe archive symlink %q -> %q", entry.Name, string(link))
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+				return err
+			}
+			if err := os.Symlink(linkTarget, target); err != nil {
+				return err
+			}
+			continue
 		}
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
@@ -472,4 +490,20 @@ func extractZip(ctx context.Context, archivePath, destination string) error {
 		}
 	}
 	return nil
+}
+
+func readZipEntry(entry *zip.File, limit int64) ([]byte, error) {
+	source, err := entry.Open()
+	if err != nil {
+		return nil, err
+	}
+	defer source.Close()
+	data, err := io.ReadAll(io.LimitReader(source, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("entry exceeds %d bytes", limit)
+	}
+	return data, nil
 }

@@ -4,26 +4,30 @@
     "darwin/arm64": {
       "revision": 1321438,
       "url": "https://storage.googleapis.com/chromium-browser-snapshots/Mac_Arm/1321438/chrome-mac.zip",
-      "sha256": "",
-      "executable": "chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+      "sha256": "4a478b542f1f6eaa160e64aab76100501e061d3bba46f6a480897ef1103c70c5",
+      "executable": "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+      "approx_bytes": 135605548
     },
     "darwin/amd64": {
       "revision": 1321438,
       "url": "https://storage.googleapis.com/chromium-browser-snapshots/Mac/1321438/chrome-mac.zip",
-      "sha256": "",
-      "executable": "chrome-mac/Chromium.app/Contents/MacOS/Chromium"
+      "sha256": "b25cd79dc73ebf423b05a4a0d65f772a78e3b87d394e9a2e7d0a4cc9201bda7b",
+      "executable": "chrome-mac/Chromium.app/Contents/MacOS/Chromium",
+      "approx_bytes": 149328540
     },
     "windows/amd64": {
       "revision": 1321438,
       "url": "https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/1321438/chrome-win.zip",
-      "sha256": "",
-      "executable": "chrome-win/chrome.exe"
+      "sha256": "f8ddee43d6865a974fc8acfcfcb9f6a42e84aadc427482ae2fa2e6a36a413454",
+      "executable": "chrome-win/chrome.exe",
+      "approx_bytes": 267483258
     },
     "linux/amd64": {
       "revision": 1321438,
       "url": "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1321438/chrome-linux.zip",
-      "sha256": "",
-      "executable": "chrome-linux/chrome"
+      "sha256": "b5fb87b55fd81eaba9325d67220585cc12c12df529bd8ae46906d43dd5699e4e",
+      "executable": "chrome-linux/chrome",
+      "approx_bytes": 190157449
     }
   }
 }

@@ -78,6 +78,23 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	}
 
 	songs, err := a.Backend.ParsePlaylist(ctx, set.Arg(0), service.ParseOptions{BrowserPolicy: policy}, observer)
+	if err != nil && policy != service.BrowserNever && a.Browser != nil {
+		status, statusErr := a.Browser.Status(ctx)
+		if statusErr == nil && !status.Installed {
+			approved := policy == service.BrowserAlways
+			if a.IO.Interactive && !approved {
+				answer, _ := a.ask("直接解析失败。下载约 150 MB 的校验版 Chromium 后重试? [y/N] ")
+				approved = strings.EqualFold(answer, "y")
+			}
+			if approved {
+				if _, installErr := a.Browser.Install(ctx, true); installErr == nil {
+					songs, err = a.Backend.ParsePlaylist(ctx, set.Arg(0), service.ParseOptions{BrowserPolicy: service.BrowserAlways}, observer)
+				} else {
+					fmt.Fprintf(a.IO.Err, "浏览器安装失败: %v\n", installErr)
+				}
+			}
+		}
+	}
 	if err != nil && a.IO.Interactive {
 		fmt.Fprintf(a.IO.Err, "自动解析失败: %v\n", err)
 		songs = a.readManualSongs()

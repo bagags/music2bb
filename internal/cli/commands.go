@@ -44,6 +44,10 @@ func (a *App) runFavorites(ctx context.Context, args []string) int {
 		fmt.Fprintln(a.IO.Err, "用法: kg2bb favorites list|create")
 		return ExitInvalidInput
 	}
+	if _, err := a.Backend.Login(ctx, service.LoginOptions{UseStoredCookies: true, AllowQR: a.IO.Interactive}, a.observer(false)); err != nil {
+		fmt.Fprintf(a.IO.Err, "登录失败: %v\n", err)
+		return exitFor(err)
+	}
 	switch args[0] {
 	case "list":
 		set := newFlagSet("favorites list", a.IO.Err)
@@ -96,11 +100,22 @@ func (a *App) runFavorites(ctx context.Context, args []string) int {
 }
 
 func (a *App) runBrowser(ctx context.Context, args []string) int {
-	if len(args) != 1 || a.Browser == nil {
+	filtered := make([]string, 0, len(args))
+	for index := 0; index < len(args); index++ {
+		if args[index] == "--config-dir" && index+1 < len(args) {
+			index++
+			continue
+		}
+		if strings.HasPrefix(args[index], "--config-dir=") {
+			continue
+		}
+		filtered = append(filtered, args[index])
+	}
+	if len(filtered) != 1 || a.Browser == nil {
 		fmt.Fprintln(a.IO.Err, "用法: kg2bb browser install|status|clear")
 		return ExitInvalidInput
 	}
-	switch args[0] {
+	switch filtered[0] {
 	case "status":
 		status, err := a.Browser.Status(ctx)
 		if err != nil {

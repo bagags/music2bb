@@ -63,14 +63,21 @@ func TestInstallFailsClosedWithPlaceholderManifest(t *testing.T) {
 	}
 }
 
-func TestEmbeddedManifestFailsClosedUntilChecksumsArePublished(t *testing.T) {
-	manager, err := NewManager(t.TempDir())
+func TestEmbeddedManifestPinsVerifiedArtifacts(t *testing.T) {
+	manifest, err := loadEmbeddedManifest()
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = manager.Install(context.Background(), InstallOptions{Approved: true})
-	if !IsKind(err, ErrorUnverifiedArtifact) {
-		t.Fatalf("Install error = %v, want %s", err, ErrorUnverifiedArtifact)
+	for platform, artifact := range manifest.Artifacts {
+		if artifact.Revision != PinnedRevision {
+			t.Errorf("%s revision = %d, want %d", platform, artifact.Revision, PinnedRevision)
+		}
+		if !validChecksum(artifact.SHA256) {
+			t.Errorf("%s has invalid checksum %q", platform, artifact.SHA256)
+		}
+		if artifact.URL == "" || artifact.Executable == "" || artifact.ApproxBytes <= 0 {
+			t.Errorf("%s has incomplete artifact metadata: %#v", platform, artifact)
+		}
 	}
 }
 
@@ -177,6 +184,71 @@ func TestExtractZipRejectsTraversal(t *testing.T) {
 	}
 	if err := extractZip(context.Background(), archivePath, t.TempDir()); err == nil {
 		t.Fatal("expected unsafe archive path error")
+	}
+}
+
+func TestExtractZipAllowsSafeRelativeSymlink(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	targetHeader := &zip.FileHeader{Name: "app/Versions/1/file", Method: zip.Store}
+	targetHeader.SetMode(0o755)
+	target, err := writer.CreateHeader(targetHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(target, "binary"); err != nil {
+		t.Fatal(err)
+	}
+	linkHeader := &zip.FileHeader{Name: "app/Current", Method: zip.Store}
+	linkHeader.SetMode(os.ModeSymlink | 0o777)
+	link, err := writer.CreateHeader(linkHeader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(link, "Versions/1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "archive.zip")
+	if err := os.WriteFile(archivePath, buffer.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if err := extractZip(context.Background(), archivePath, destination); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := filepath.EvalSymlinks(filepath.Join(destination, "app", "Current", "file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(resolved); err != nil || string(data) != "binary" {
+		t.Fatalf("resolved symlink data = %q, %v", data, err)
+	}
+}
+
+func TestExtractZipRejectsEscapingSymlink(t *testing.T) {
+	var buffer bytes.Buffer
+	writer := zip.NewWriter(&buffer)
+	header := &zip.FileHeader{Name: "app/link", Method: zip.Store}
+	header.SetMode(os.ModeSymlink | 0o777)
+	entry, err := writer.CreateHeader(header)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.WriteString(entry, "../../escape"); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "archive.zip")
+	if err := os.WriteFile(archivePath, buffer.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := extractZip(context.Background(), archivePath, t.TempDir()); err == nil {
+		t.Fatal("expected unsafe symlink error")
 	}
 }
 
