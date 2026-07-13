@@ -130,9 +130,11 @@ func (a *App) runBrowser(ctx context.Context, args []string) int {
 		return ExitSuccess
 	case "install":
 		allow := true // The explicit install command is non-interactive approval.
-		fmt.Fprintln(a.IO.Out, "Chromium 下载约 150 MB，完成后会校验 SHA-256。")
+		status, _ := a.Browser.Status(ctx)
+		size := browserDownloadSize(status)
+		fmt.Fprintf(a.IO.Out, "Chromium 下载%s，完成后会校验 SHA-256。\n", size)
 		if a.IO.Interactive {
-			answer, _ := a.ask("将下载经过校验的 Chromium（约 150 MB），继续? [y/N] ")
+			answer, _ := a.ask(fmt.Sprintf("将下载经过校验的 Chromium（%s），继续? [y/N] ", size))
 			allow = strings.EqualFold(answer, "y")
 		}
 		if !allow {
@@ -156,4 +158,12 @@ func (a *App) runBrowser(ctx context.Context, args []string) int {
 	default:
 		return ExitInvalidInput
 	}
+}
+
+func browserDownloadSize(status kg2bb.BrowserStatus) string {
+	if status.ApproxBytes <= 0 {
+		return "约 150–270 MB"
+	}
+	megabytes := (status.ApproxBytes + 999_999) / 1_000_000
+	return fmt.Sprintf("约 %d MB", megabytes)
 }

@@ -82,7 +82,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 		if statusErr == nil && !status.Installed {
 			approved := policy == kg2bb.BrowserAlways
 			if a.IO.Interactive && !approved {
-				answer, _ := a.ask("直接解析失败。下载约 150 MB 的校验版 Chromium 后重试? [y/N] ")
+				answer, _ := a.ask(fmt.Sprintf("直接解析失败。下载%s的校验版 Chromium 后重试? [y/N] ", browserDownloadSize(status)))
 				approved = strings.EqualFold(answer, "y")
 			}
 			if approved {

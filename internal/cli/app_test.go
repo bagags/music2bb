@@ -66,7 +66,7 @@ func testApp(backend Backend) (*App, *bytes.Buffer, *bytes.Buffer) {
 	errOut := &bytes.Buffer{}
 	return &App{
 		Backend: backend,
-		Browser: fakeBrowser{status: kg2bb.BrowserStatus{Installed: true, Revision: 1, Verified: true, ExecutablePath: "/tmp/chrome"}},
+		Browser: fakeBrowser{status: kg2bb.BrowserStatus{Installed: true, Revision: 1, ApproxBytes: 267_483_258, Verified: true, ExecutablePath: "/tmp/chrome"}},
 		IO:      IO{In: strings.NewReader(""), Out: out, Err: errOut},
 		Version: "v1.2.3",
 	}, out, errOut
@@ -133,5 +133,15 @@ func TestVersionAndBrowserStatus(t *testing.T) {
 	out.Reset()
 	if exit := app.Run(context.Background(), []string{"browser", "status"}); exit != 0 || !strings.Contains(out.String(), "verified=true") {
 		t.Fatalf("browser exit=%d output=%q", exit, out.String())
+	}
+}
+
+func TestBrowserInstallReportsPlatformArchiveSize(t *testing.T) {
+	app, out, errOut := testApp(&fakeBackend{})
+	if exit := app.Run(context.Background(), []string{"browser", "install"}); exit != ExitSuccess {
+		t.Fatalf("exit = %d, stderr = %q", exit, errOut.String())
+	}
+	if !strings.Contains(out.String(), "约 268 MB") {
+		t.Fatalf("output = %q", out.String())
 	}
 }

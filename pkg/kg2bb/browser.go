@@ -11,6 +11,7 @@ type BrowserStatus struct {
 	CacheDir         string
 	Platform         string
 	Revision         int
+	ApproxBytes      int64
 	ExecutablePath   string
 	ExpectedSHA256   string
 	ArchiveSHA256    string
@@ -48,6 +49,7 @@ func (m *BrowserManager) Clear(ctx context.Context) error {
 func browserStatusFromInternal(status browser.Status) BrowserStatus {
 	return BrowserStatus{
 		CacheDir: status.CacheDir, Platform: status.Platform, Revision: status.Revision,
+		ApproxBytes:    status.ApproxBytes,
 		ExecutablePath: status.ExecutablePath, ExpectedSHA256: status.ExpectedSHA256,
 		ArchiveSHA256: status.ArchiveSHA256, ExecutableSHA256: status.ExecutableSHA256,
 		Present: status.Present, Installed: status.Installed, Verified: status.Verified,

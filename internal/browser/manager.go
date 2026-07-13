@@ -43,6 +43,7 @@ type Status struct {
 	CacheDir         string
 	Platform         string
 	Revision         int
+	ApproxBytes      int64
 	ExecutablePath   string
 	ExpectedSHA256   string
 	ArchiveSHA256    string
@@ -142,6 +143,7 @@ func (m *Manager) Status(ctx context.Context) (Status, error) {
 		CacheDir:       m.cacheDir,
 		Platform:       m.platform,
 		Revision:       artifact.Revision,
+		ApproxBytes:    artifact.ApproxBytes,
 		ExecutablePath: m.executablePath(artifact),
 		ExpectedSHA256: strings.ToLower(artifact.SHA256),
 	}
