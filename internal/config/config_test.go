@@ -33,6 +33,11 @@ func TestLoadUsesEmbeddedDefaults(t *testing.T) {
 	if !reflect.DeepEqual(cfg.WeightedUploaders, wantUploaders) {
 		t.Errorf("embedded uploaders changed:\n got: %#v\nwant: %#v", cfg.WeightedUploaders, wantUploaders)
 	}
+	for _, path := range []string{cfg.BlockFile, cfg.QualityFile, cfg.UploaderFile} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("editable default %s was not materialized: %v", path, err)
+		}
+	}
 }
 
 func TestExternalListsOverrideEmbeddedDefaults(t *testing.T) {
@@ -118,11 +123,45 @@ func TestMigrationMarkerPreventsSubsequentImport(t *testing.T) {
 	if !second.Migration.AlreadyComplete {
 		t.Fatal("second load did not observe migration marker")
 	}
-	if _, err := os.Stat(second.BlockFile); !os.IsNotExist(err) {
-		t.Fatalf("legacy state was imported again, stat error = %v", err)
+	if _, err := os.Stat(second.BlockFile); err != nil {
+		t.Fatalf("editable defaults were not restored, stat error = %v", err)
 	}
 	if len(second.BlockKeywords) != 33 {
 		t.Errorf("missing external list should use embedded defaults, got %d entries", len(second.BlockKeywords))
+	}
+}
+
+func TestLoadMigratesOldAppConfigAndRepairsHeaderOnlyArtifact(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	legacy := filepath.Join(root, "kg2bb")
+	destination := filepath.Join(root, "music2bb")
+	writeTestFile(t, filepath.Join(legacy, "b.txt"), "# 视频关键词屏蔽列表\n# 匹配以下关键词的视频将被屏蔽\n# 一行一个，#开头的行会被忽略\n", 0o644)
+	writeTestFile(t, filepath.Join(legacy, "w.txt"), "legacy-quality\n", 0o644)
+
+	cfg, err := Load(Options{
+		Dir: destination, CacheDir: filepath.Join(root, "cache"), LegacyDir: legacy,
+		WorkingDir: filepath.Join(root, "working"), ExecutableDir: filepath.Join(root, "executable"),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.BlockKeywords) != 33 || cfg.BlockKeywords[0] != "翻唱" {
+		t.Fatalf("header-only artifact was not repaired: %#v", cfg.BlockKeywords)
+	}
+	if !reflect.DeepEqual(cfg.QualityKeywords, []string{"legacy-quality"}) {
+		t.Fatalf("legacy override was not preserved: %#v", cfg.QualityKeywords)
+	}
+	if !reflect.DeepEqual(cfg.Migration.Copied, []string{"b.txt", "w.txt"}) {
+		t.Fatalf("copied = %#v", cfg.Migration.Copied)
+	}
+}
+
+func TestParseKeywordsHandlesBOMWhitespaceAndDuplicates(t *testing.T) {
+	t.Parallel()
+	got := parseKeywords([]byte("\uFEFF alpha \r\n# comment\nalpha\n beta\n"))
+	if !reflect.DeepEqual(got, []string{"alpha", "beta"}) {
+		t.Fatalf("keywords = %#v", got)
 	}
 }
 

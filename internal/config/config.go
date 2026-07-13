@@ -16,7 +16,8 @@ import (
 
 const (
 	appName             = "music2bb"
-	migrationMarkerName = ".migration-v1"
+	legacyAppName       = "kg2bb"
+	migrationMarkerName = ".migration-v2"
 )
 
 //go:embed defaults/*.txt
@@ -30,6 +31,7 @@ type Options struct {
 	CacheDir      string
 	WorkingDir    string
 	ExecutableDir string
+	LegacyDir     string
 	SkipMigration bool
 }
 
@@ -117,6 +119,9 @@ func Load(options Options) (Config, error) {
 		if err != nil {
 			return Config{}, err
 		}
+	}
+	if err := materializeEditableLists(paths); err != nil {
+		return Config{}, err
 	}
 
 	blocks, err := loadList(paths.BlockFile, "defaults/b.txt")
@@ -231,6 +236,16 @@ func defaultBaseDirs() (string, string, error) {
 }
 
 func resolveLegacyDirs(options Options) ([]string, error) {
+	legacyDirs := make([]string, 0, 3)
+	if strings.TrimSpace(options.LegacyDir) != "" {
+		legacyDirs = append(legacyDirs, options.LegacyDir)
+	} else if strings.TrimSpace(options.Dir) == "" {
+		legacyDir, err := defaultLegacyConfigDir()
+		if err != nil {
+			return nil, err
+		}
+		legacyDirs = append(legacyDirs, legacyDir)
+	}
 	workingDir := options.WorkingDir
 	if workingDir == "" {
 		var err error
@@ -247,7 +262,72 @@ func resolveLegacyDirs(options Options) ([]string, error) {
 		}
 		executableDir = filepath.Dir(executable)
 	}
-	return uniqueNonEmptyPaths([]string{workingDir, executableDir}), nil
+	legacyDirs = append(legacyDirs, workingDir, executableDir)
+	return uniqueNonEmptyPaths(legacyDirs), nil
+}
+
+func defaultLegacyConfigDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory: %w", err)
+	}
+	switch runtime.GOOS {
+	case "darwin":
+		return filepath.Join(home, "Library", "Application Support", legacyAppName), nil
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			appData = filepath.Join(home, "AppData", "Roaming")
+		}
+		return filepath.Join(appData, legacyAppName), nil
+	default:
+		configBase := os.Getenv("XDG_CONFIG_HOME")
+		if configBase == "" {
+			configBase = filepath.Join(home, ".config")
+		}
+		return filepath.Join(configBase, legacyAppName), nil
+	}
+}
+
+func materializeEditableLists(paths Paths) error {
+	for _, item := range []struct {
+		target   string
+		embedded string
+	}{
+		{target: paths.BlockFile, embedded: "defaults/b.txt"},
+		{target: paths.QualityFile, embedded: "defaults/w.txt"},
+		{target: paths.UploaderFile, embedded: "defaults/w-up.txt"},
+	} {
+		data, err := os.ReadFile(item.target)
+		missing := errors.Is(err, fs.ErrNotExist)
+		if err != nil && !missing {
+			return fmt.Errorf("inspect editable keyword list %s: %w", item.target, err)
+		}
+		if !missing && !isKnownHeaderOnlyArtifact(data) {
+			continue
+		}
+		defaults, err := defaultLists.ReadFile(item.embedded)
+		if err != nil {
+			return fmt.Errorf("read embedded keyword list %s: %w", item.embedded, err)
+		}
+		if err := atomicWriteFile(item.target, defaults, 0o644); err != nil {
+			return fmt.Errorf("materialize editable keyword list %s: %w", item.target, err)
+		}
+	}
+	return nil
+}
+
+func isKnownHeaderOnlyArtifact(data []byte) bool {
+	if len(parseKeywords(data)) != 0 {
+		return false
+	}
+	text := strings.TrimPrefix(string(data), "\uFEFF")
+	if !strings.Contains(text, "一行一个") {
+		return false
+	}
+	return strings.Contains(text, "视频关键词屏蔽列表") ||
+		strings.Contains(text, "视频关键词加权列表") ||
+		strings.Contains(text, "UP主用户名加权列表")
 }
 
 func loadList(externalPath, embeddedPath string) ([]string, error) {
@@ -262,13 +342,18 @@ func loadList(externalPath, embeddedPath string) ([]string, error) {
 }
 
 func parseKeywords(data []byte) []string {
-	lines := strings.Split(string(data), "\n")
+	lines := strings.Split(strings.TrimPrefix(string(data), "\uFEFF"), "\n")
 	keywords := make([]string, 0, len(lines))
+	seen := make(map[string]struct{}, len(lines))
 	for _, line := range lines {
 		keyword := strings.TrimSpace(line)
 		if keyword == "" || strings.HasPrefix(keyword, "#") {
 			continue
 		}
+		if _, duplicate := seen[keyword]; duplicate {
+			continue
+		}
+		seen[keyword] = struct{}{}
 		keywords = append(keywords, keyword)
 	}
 	return keywords
