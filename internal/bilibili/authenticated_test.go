@@ -39,7 +39,9 @@ func TestAuthenticatedFavoriteLifecycleCanary(t *testing.T) {
 		t.Fatalf("authenticated account required: account=%#v err=%v", account, err)
 	}
 
-	title := fmt.Sprintf("kg2bb-canary-%d", time.Now().Unix())
+	// Bilibili currently limits favorite titles to 20 characters. Keep the
+	// canary uniquely identifiable without depending on the server truncating it.
+	title := fmt.Sprintf("kg2bb-%d", time.Now().Unix())
 	favorite, err := client.CreateFavorite(ctx, CreateFavoriteRequest{Title: title, Intro: "kg2bb authenticated integration canary", Private: true})
 	if err != nil {
 		t.Fatal(err)
@@ -74,16 +76,9 @@ func TestAuthenticatedFavoriteLifecycleCanary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("add known video: result=%#v err=%v; folder ID=%d", result, err, favorite.ID)
 	}
-	resources, err := client.ListFavoriteResources(ctx, favorite.ID)
+	resources, found, err := waitForFavoriteResource(ctx, client, favorite.ID, video)
 	if err != nil {
 		t.Fatalf("verify known video: %v; folder ID=%d", err, favorite.ID)
-	}
-	found := false
-	for _, resource := range resources {
-		if resource.BVID == bvid || (resource.BVID == "" && resource.AID == video.AID) {
-			found = true
-			break
-		}
 	}
 	if !found {
 		var ids []string
@@ -92,4 +87,27 @@ func TestAuthenticatedFavoriteLifecycleCanary(t *testing.T) {
 		}
 		t.Fatalf("known video %s not found after add (found %s); folder ID=%d", bvid, strings.Join(ids, ","), favorite.ID)
 	}
+}
+
+func waitForFavoriteResource(ctx context.Context, client *Client, favoriteID int64, video model.Video) ([]FavoriteResource, bool, error) {
+	const attempts = 20
+	var resources []FavoriteResource
+	for attempt := 0; attempt < attempts; attempt++ {
+		var err error
+		resources, err = client.ListFavoriteResources(ctx, favoriteID)
+		if err != nil {
+			return resources, false, err
+		}
+		for _, resource := range resources {
+			if resource.BVID == video.BVID || (resource.BVID == "" && resource.AID == video.AID) {
+				return resources, true, nil
+			}
+		}
+		if attempt+1 < attempts {
+			if err := client.sleep(ctx, 500*time.Millisecond); err != nil {
+				return resources, false, err
+			}
+		}
+	}
+	return resources, false, nil
 }
