@@ -1,12 +1,13 @@
 # music2bb
 
-将酷狗歌单转换为 Bilibili 收藏夹的 Go 项目，命令行程序名为 `music2bb`。它会解析歌曲、并发搜索并评分 Bilibili 视频，再将确认后的结果写入指定收藏夹。
+将在线歌单转换为 Bilibili 收藏夹的 Go 项目，命令行程序名为 `music2bb`。它会自动识别歌单来源、解析歌曲、并发搜索并评分 Bilibili 视频，再将确认后的结果写入指定收藏夹。
 
 旧 Python CLI 和 GUI 已退役；本仓库现在只发布 Go CLI 和可复用的 Go 后端包。
 
 ## 功能
 
-- 酷狗直连 API、页面 JSON 和受控 Chromium 三级解析
+- 自动识别歌单来源，优先使用已注册的来源优化，并以受控 Chromium 提供通用网页回退
+- 保留酷狗直连 API、页面 JSON、分页、签名和歌曲清理优化
 - Bilibili 扫码登录、Cookie 持久化、WBI 签名和收藏夹管理
 - 关键词、音质、官方来源、热度和 UP 主权重综合评分
 - 默认 4 个受限并发 worker，保持输入与结果顺序
@@ -35,7 +36,7 @@ go build -trimpath -o music2bb ./cmd/music2bb
 ## 使用
 
 ```text
-music2bb convert <kugou-url> [options]
+music2bb convert <playlist-url> [options]
 music2bb login
 music2bb favorites list
 music2bb favorites create <name> [--intro TEXT] [--private]
@@ -49,7 +50,7 @@ music2bb version
 music2bb login
 ```
 
-自动转换到指定收藏夹：
+自动转换到指定收藏夹（以下使用酷狗优化来源作为示例）：
 
 ```bash
 music2bb convert 'https://m.kugou.com/share/zlist.html?specialid=3339907' \
@@ -59,7 +60,7 @@ music2bb convert 'https://m.kugou.com/share/zlist.html?specialid=3339907' \
 保留五个候选并逐首审核：
 
 ```bash
-music2bb convert '<kugou-url>' --top-k 5 --manual-review
+music2bb convert '<playlist-url>' --top-k 5 --manual-review
 ```
 
 常用选项：
@@ -80,9 +81,17 @@ music2bb convert '<kugou-url>' --top-k 5 --manual-review
 
 非交互式写入需要同时指定 `--favorite` 和 `--yes`。
 
-## Chromium 回退
+## 歌单解析与 Chromium 回退
 
-程序优先使用直接 API 和页面数据。只有这些方法失败且浏览器策略允许时，才使用 Chromium。浏览器不打包进程序；下载前会显示当前平台归档的实际近似大小，并要求明确批准。
+程序根据原始 HTTP(S) URL 自动识别歌单来源，不需要也不提供 `--provider`。已识别来源会先运行已注册的优化；当前酷狗优化保留直连 API、页面数据和既有解析顺序。未知来源或没有歌单提取优化的来源，在策略允许时直接使用通用 Chromium 提取。只有来源优化结果为空或少于页面声明总数时才触发浏览器回退；合并时来源优化结果优先，并保留可用的部分歌单。
+
+| `--browser` | 处理方式 |
+|---|---|
+| `never` | 只运行来源优化；未知或无对应优化的来源返回提取错误，不启动或安装 Chromium |
+| `auto` | 先运行来源优化，仅在需要时使用已注入或已安装的 Chromium；浏览器不可用或回退失败时保留可用的部分结果 |
+| `always` | 要求 Chromium 已注入或通过校验安装，仍先运行来源优化，并仅在结果为空或不完整时启动浏览器 |
+
+后端解析过程从不安装 Chromium，也不会弹出确认提示。CLI 在解析失败后负责查看浏览器状态、请求批准、安装并重试。浏览器不打包进程序；下载前会显示当前平台归档的实际近似大小，并要求明确批准。
 
 ```bash
 music2bb browser status
@@ -124,7 +133,7 @@ if err != nil {
 }
 defer engine.Close()
 
-songs, err := engine.ParsePlaylist(ctx, kugouURL, observer)
+songs, err := engine.ParsePlaylist(ctx, playlistURL, observer)
 ```
 
 模块根包 `music2bb` 暴露上下文感知的登录、解析、匹配、搜索、收藏夹和浏览器操作，以及序列化观察者、类型化错误和测试依赖注入。非公开站点协议保留在 `internal` 包中。项目的包职责和依赖方向见 [`docs/architecture.md`](docs/architecture.md)。

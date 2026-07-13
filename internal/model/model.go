@@ -18,7 +18,7 @@ const (
 	QualityHiRes
 )
 
-// Song is a track extracted from a Kugou playlist.
+// Song is a track extracted from an online playlist.
 type Song struct {
 	Name     string
 	Artist   string
