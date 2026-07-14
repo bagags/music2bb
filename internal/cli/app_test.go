@@ -200,6 +200,9 @@ func TestHelpUsesGenericPlaylistURL(t *testing.T) {
 	if strings.Contains(out.String(), "<kugou-url>") {
 		t.Fatalf("help retains provider-specific usage: %q", out.String())
 	}
+	if !strings.Contains(out.String(), "music2bb license") {
+		t.Fatalf("help omits license command: %q", out.String())
+	}
 }
 
 func TestConvertUsageUsesGenericPlaylistURL(t *testing.T) {
@@ -283,6 +286,29 @@ func TestVersionAndBrowserStatus(t *testing.T) {
 	out.Reset()
 	if exit := app.Run(context.Background(), []string{"browser", "status"}); exit != 0 || !strings.Contains(out.String(), "verified=true") {
 		t.Fatalf("browser exit=%d output=%q", exit, out.String())
+	}
+}
+
+func TestLicenseIncludesRequiredNotices(t *testing.T) {
+	app, out, errOut := testApp(&fakeBackend{})
+	if exit := app.Run(context.Background(), []string{"license"}); exit != ExitSuccess {
+		t.Fatalf("exit = %d, want %d", exit, ExitSuccess)
+	}
+	for _, required := range []string{
+		"Copyright (C) 2026 Chaoyi Liu, bagags, and music2bb contributors.",
+		"GNU General Public License",
+		"GPL-3.0-only",
+		"WITHOUT ANY",
+		"WARRANTY;",
+		"https://github.com/bagags/music2bb-go/blob/main/LICENSE.md",
+		"Source: https://github.com/bagags/music2bb-go",
+	} {
+		if !strings.Contains(out.String(), required) {
+			t.Errorf("output omits %q: %q", required, out.String())
+		}
+	}
+	if errOut.Len() != 0 {
+		t.Fatalf("stderr = %q", errOut.String())
 	}
 }
 

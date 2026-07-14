@@ -41,6 +41,7 @@ music2bb favorites list
 music2bb favorites create <name> [--intro TEXT] [--public]
 music2bb browser install|status|clear
 music2bb version
+music2bb license
 ```
 
 首次登录：
@@ -194,3 +195,4 @@ You should have received a copy of the GNU General Public License along with
 music2bb. If not, see <https://www.gnu.org/licenses/>.
 
 发布包所含依赖项及内置 Chromium 的版权与许可证声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+运行 `music2bb license` 可在终端查看项目版权、无担保声明、许可证和源码地址。

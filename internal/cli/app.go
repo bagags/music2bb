@@ -66,6 +66,9 @@ func (a *App) Run(ctx context.Context, args []string) int {
 	case "version":
 		fmt.Fprintln(a.IO.Out, a.Version)
 		return ExitSuccess
+	case "license":
+		a.printLicense()
+		return ExitSuccess
 	default:
 		fmt.Fprintf(a.IO.Err, "未知命令: %s\n\n", command)
 		a.printHelp()
@@ -100,7 +103,8 @@ func (a *App) printHelp() {
   music2bb favorites list
   music2bb favorites create <name> [--intro TEXT] [--public]
   music2bb browser install|status|clear
-  music2bb version`)
+  music2bb version
+  music2bb license`)
 }
 
 func (a *App) observer(verbose bool) music2bb.Observer {
