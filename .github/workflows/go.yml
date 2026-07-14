@@ -52,16 +52,36 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
+          OUTPUT: ${{ matrix.output }}
+          PACKAGE: music2bb-${{ matrix.goos }}-${{ matrix.goarch }}
           VERSION: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || format('dev-{0}', github.sha) }}
         run: |
-          mkdir -p dist
+          mkdir -p "dist/${PACKAGE}"
           BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o dist/${{ matrix.output }} ./cmd/music2bb
-          cd dist
-          sha256sum '${{ matrix.output }}' > '${{ matrix.output }}.sha256'
+          go build -trimpath -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${GITHUB_SHA} -X main.date=${BUILD_DATE}" -o "dist/${PACKAGE}/${OUTPUT}" ./cmd/music2bb
+          cp LICENSE.md THIRD_PARTY_NOTICES.md "dist/${PACKAGE}/"
+          printf '%s\n' \
+            "music2bb ${VERSION}" \
+            "Commit: ${GITHUB_SHA}" \
+            "Source repository: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            "Corresponding source: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/tree/${GITHUB_SHA}" \
+            > "dist/${PACKAGE}/SOURCE.txt"
+          if [[ "${GOOS}" == "windows" ]]; then
+            ARCHIVE="${PACKAGE}.zip"
+            cd dist
+            zip -r "${ARCHIVE}" "${PACKAGE}"
+            rm -rf "${PACKAGE}"
+            sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          else
+            ARCHIVE="${PACKAGE}.tar.gz"
+            tar -C dist -czf "dist/${ARCHIVE}" "${PACKAGE}"
+            rm -rf "dist/${PACKAGE}"
+            cd dist
+            sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          fi
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.output }}
+          name: music2bb-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/*
           if-no-files-found: error
 

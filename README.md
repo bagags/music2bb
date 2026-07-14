@@ -15,7 +15,7 @@
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/gguage/music-to-bb/releases) 下载与平台对应的单文件程序，并使用随附的 `.sha256` 文件校验；或安装当前源码：
+从 [GitHub Releases](https://github.com/gguage/music-to-bb/releases) 下载与平台对应的压缩包，并使用随附的 `.sha256` 文件校验。压缩包包含单文件程序、GPLv3 许可证、第三方软件声明和对应源码信息。也可以直接安装当前源码：
 
 ```bash
 go install github.com/gguage/music-to-bb/cmd/music2bb@latest
@@ -172,4 +172,22 @@ go test -count=1 -tags=authenticated ./internal/bilibili \
   -run TestAuthenticatedFavoriteLifecycleCanary -v
 ```
 
-CI 运行单元、fixture、race、vet、标签编译、平台构建以及 macOS ARM64、Windows AMD64 和 Windows ARM64 的真实浏览器安装、启动和受控提取。`v*` 标签会发布精简的版本化二进制和 SHA-256 文件。
+CI 运行单元、fixture、race、vet、标签编译、平台构建以及 macOS ARM64、Windows AMD64 和 Windows ARM64 的真实浏览器安装、启动和受控提取。`v*` 标签会发布包含许可证、第三方软件声明和对应源码信息的版本化压缩包及其 SHA-256 文件。
+
+## 许可证
+
+Copyright (C) 2026 Chaoyi Liu, bagags, and music2bb contributors.
+
+music2bb is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software
+Foundation, version 3 of the License. This project is licensed under
+`GPL-3.0-only`; see [`LICENSE.md`](LICENSE.md) for the complete terms.
+
+music2bb is distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR
+A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License along with
+music2bb. If not, see <https://www.gnu.org/licenses/>.
+
+发布包所含依赖项的版权与许可证声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。Chromium 不包含在 music2bb 发布包中，而是在用户明确批准后从其上游快照地址单独下载。
