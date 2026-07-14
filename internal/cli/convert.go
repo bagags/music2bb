@@ -376,12 +376,12 @@ func (a *App) createFavoriteInline(ctx context.Context) (music2bb.Favorite, bool
 	if err != nil {
 		return music2bb.Favorite{}, false, err
 	}
-	privateAnswer, err := a.ask("设为仅自己可见? [y/N] ")
+	publicAnswer, err := a.ask("设为公开可见? [y/N] ")
 	if err != nil {
 		return music2bb.Favorite{}, false, err
 	}
 	favorite, err := a.Backend.CreateFavorite(ctx, music2bb.CreateFavoriteRequest{
-		Title: strings.TrimSpace(title), Intro: intro, Private: strings.EqualFold(privateAnswer, "y"),
+		Title: strings.TrimSpace(title), Intro: intro, Private: !strings.EqualFold(publicAnswer, "y"),
 	})
 	if err != nil {
 		return music2bb.Favorite{}, false, err

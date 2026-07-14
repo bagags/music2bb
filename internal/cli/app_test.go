@@ -209,14 +209,26 @@ func TestExplicitQRLoginAlias(t *testing.T) {
 	}
 }
 
-func TestFavoritesCreateAllowsFlagsAfterName(t *testing.T) {
+func TestFavoritesCreateDefaultsToPrivate(t *testing.T) {
 	backend := &fakeBackend{}
 	app, _, errOut := testApp(backend)
-	exit := app.Run(context.Background(), []string{"favorites", "create", "new folder", "--intro", "hello", "--private"})
+	exit := app.Run(context.Background(), []string{"favorites", "create", "new folder", "--intro", "hello"})
 	if exit != ExitSuccess {
 		t.Fatalf("exit = %d, stderr=%s", exit, errOut.String())
 	}
 	if backend.created.Title != "new folder" || backend.created.Intro != "hello" || !backend.created.Private {
+		t.Fatalf("request = %#v", backend.created)
+	}
+}
+
+func TestFavoritesCreatePublicFlagAllowsFlagsAfterName(t *testing.T) {
+	backend := &fakeBackend{}
+	app, _, errOut := testApp(backend)
+	exit := app.Run(context.Background(), []string{"favorites", "create", "new folder", "--intro", "hello", "--public"})
+	if exit != ExitSuccess {
+		t.Fatalf("exit = %d, stderr=%s", exit, errOut.String())
+	}
+	if backend.created.Title != "new folder" || backend.created.Intro != "hello" || backend.created.Private {
 		t.Fatalf("request = %#v", backend.created)
 	}
 }
@@ -262,7 +274,7 @@ func TestConvertRetriesInvalidFavoriteAndCreatesInline(t *testing.T) {
 	backend := &fakeBackend{}
 	app, out, errOut := testApp(backend)
 	app.IO.Interactive = true
-	app.IO.In = strings.NewReader("invalid\n0\nnew folder\ninline intro\ny\n")
+	app.IO.In = strings.NewReader("invalid\n0\nnew folder\ninline intro\n\n")
 	exit := app.Run(context.Background(), []string{"convert", "https://example.test/list", "--favorite", "missing", "--yes"})
 	if exit != ExitSuccess {
 		t.Fatalf("exit = %d, stderr=%q, stdout=%q", exit, errOut.String(), out.String())

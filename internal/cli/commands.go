@@ -71,9 +71,9 @@ func (a *App) runFavorites(ctx context.Context, args []string) int {
 	case "create":
 		set := newFlagSet("favorites create", a.IO.Err)
 		var intro, configDir string
-		var private bool
+		var public bool
 		set.StringVar(&intro, "intro", "", "收藏夹简介")
-		set.BoolVar(&private, "private", false, "仅自己可见")
+		set.BoolVar(&public, "public", false, "设为公开可见")
 		set.StringVar(&configDir, "config-dir", "", "配置目录")
 		values := map[string]bool{"--intro": true, "--config-dir": true}
 		if err := set.Parse(interspersed(args[1:], values)); err != nil {
@@ -83,10 +83,10 @@ func (a *App) runFavorites(ctx context.Context, args []string) int {
 			return ExitInvalidInput
 		}
 		if set.NArg() != 1 || strings.TrimSpace(set.Arg(0)) == "" {
-			fmt.Fprintln(a.IO.Err, "用法: music2bb favorites create <name> [--intro TEXT] [--private]")
+			fmt.Fprintln(a.IO.Err, "用法: music2bb favorites create <name> [--intro TEXT] [--public]")
 			return ExitInvalidInput
 		}
-		favorite, err := a.Backend.CreateFavorite(ctx, music2bb.CreateFavoriteRequest{Title: strings.TrimSpace(set.Arg(0)), Intro: intro, Private: private})
+		favorite, err := a.Backend.CreateFavorite(ctx, music2bb.CreateFavoriteRequest{Title: strings.TrimSpace(set.Arg(0)), Intro: intro, Private: !public})
 		if err != nil {
 			fmt.Fprintf(a.IO.Err, "创建收藏夹失败: %v\n", err)
 			return exitFor(err)

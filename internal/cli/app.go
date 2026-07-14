@@ -98,7 +98,7 @@ func (a *App) printHelp() {
   music2bb convert <playlist-url> [options]
   music2bb login [--no-qr-login]
   music2bb favorites list
-  music2bb favorites create <name> [--intro TEXT] [--private]
+  music2bb favorites create <name> [--intro TEXT] [--public]
   music2bb browser install|status|clear
   music2bb version`)
 }

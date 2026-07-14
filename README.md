@@ -37,7 +37,7 @@ go build -trimpath -o music2bb ./cmd/music2bb
 music2bb convert <playlist-url> [options]
 music2bb login
 music2bb favorites list
-music2bb favorites create <name> [--intro TEXT] [--private]
+music2bb favorites create <name> [--intro TEXT] [--public]
 music2bb browser install|status|clear
 music2bb version
 ```
@@ -78,6 +78,7 @@ music2bb convert '<playlist-url>' --top-k 5 --manual-review
 | `--verbose`, `-v` | `false` | 输出详细进度 |
 
 非交互式写入需要同时指定 `--favorite` 和 `--yes`。
+新建 Bilibili 收藏夹默认仅自己可见；如需公开收藏夹，请在 `favorites create` 命令中指定 `--public`。
 
 ## 歌单解析与 Chromium 回退
 
