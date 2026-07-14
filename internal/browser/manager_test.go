@@ -68,7 +68,22 @@ func TestEmbeddedManifestPinsVerifiedArtifacts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for platform, artifact := range manifest.Artifacts {
+	expectedPlatforms := []string{
+		"darwin/amd64",
+		"darwin/arm64",
+		"linux/amd64",
+		"windows/amd64",
+		"windows/arm64",
+	}
+	if len(manifest.Artifacts) != len(expectedPlatforms) {
+		t.Errorf("manifest artifact count = %d, want %d", len(manifest.Artifacts), len(expectedPlatforms))
+	}
+	for _, platform := range expectedPlatforms {
+		artifact, ok := manifest.Artifacts[platform]
+		if !ok {
+			t.Errorf("manifest is missing %s", platform)
+			continue
+		}
 		if artifact.Revision != PinnedRevision {
 			t.Errorf("%s revision = %d, want %d", platform, artifact.Revision, PinnedRevision)
 		}

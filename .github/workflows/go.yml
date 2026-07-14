@@ -38,6 +38,9 @@ jobs:
           - goos: windows
             goarch: amd64
             output: music2bb-windows-amd64.exe
+          - goos: windows
+            goarch: arm64
+            output: music2bb-windows-arm64.exe
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -73,6 +76,9 @@ jobs:
           - os: windows-latest
             archive: chromium-windows-amd64.zip
             url: https://storage.googleapis.com/chromium-browser-snapshots/Win_x64/1321438/chrome-win.zip
+          - os: windows-11-arm
+            archive: chromium-windows-arm64.zip
+            url: https://storage.googleapis.com/chromium-browser-snapshots/Win_Arm64/1321438/chrome-win.zip
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

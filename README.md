@@ -31,7 +31,7 @@ cd music2bb
 go build -trimpath -o music2bb ./cmd/music2bb
 ```
 
-支持的发布目标：macOS ARM64、macOS AMD64、Windows AMD64。
+支持的发布目标：macOS ARM64、macOS AMD64、Windows AMD64、Windows ARM64。
 
 ## 使用
 
@@ -174,4 +174,4 @@ go test -count=1 -tags=authenticated ./internal/bilibili \
   -run TestAuthenticatedFavoriteLifecycleCanary -v
 ```
 
-CI 运行单元、fixture、race、vet、标签编译、平台构建以及 macOS/Windows 的真实浏览器安装、启动和受控提取。`v*` 标签会发布精简的版本化二进制和 SHA-256 文件。
+CI 运行单元、fixture、race、vet、标签编译、平台构建以及 macOS ARM64、Windows AMD64 和 Windows ARM64 的真实浏览器安装、启动和受控提取。`v*` 标签会发布精简的版本化二进制和 SHA-256 文件。

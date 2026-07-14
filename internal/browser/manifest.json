@@ -22,6 +22,13 @@
       "executable": "chrome-win/chrome.exe",
       "approx_bytes": 267483258
     },
+    "windows/arm64": {
+      "revision": 1321438,
+      "url": "https://storage.googleapis.com/chromium-browser-snapshots/Win_Arm64/1321438/chrome-win.zip",
+      "sha256": "3f429a89d4da66117f8edda67b1a78cfc9fe7323415d969d74badaf162d4f61e",
+      "executable": "chrome-win/chrome.exe",
+      "approx_bytes": 255421465
+    },
     "linux/amd64": {
       "revision": 1321438,
       "url": "https://storage.googleapis.com/chromium-browser-snapshots/Linux_x64/1321438/chrome-linux.zip",
