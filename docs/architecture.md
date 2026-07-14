@@ -16,6 +16,7 @@ cmd/music2bb
     ├── internal/model
     ├── internal/config
     ├── internal/playlist
+    ├── internal/applemusic
     ├── internal/bilibili
     └── internal/browser
 
@@ -23,6 +24,7 @@ internal/wiring
 ├── internal/service
 ├── internal/playlist
 ├── internal/kugou
+├── internal/applemusic
 ├── internal/bilibili
 ├── internal/browser
 ├── internal/matcher
@@ -49,6 +51,7 @@ consumers outside this module.
 | `internal/model` | I/O-free domain records and song/search normalization |
 | `internal/matcher` | Candidate filtering, scoring, ranking, and selection thresholds |
 | `internal/kugou` | Browser-free Kugou protocol optimization, response parsing, and song cleanup |
+| `internal/applemusic` | Browser-free Apple Music share-page identification and `serialized-server-data` playlist extraction |
 | `internal/bilibili` | Authentication, search, WBI signing, cookies, and favorite operations |
 | `internal/browser` | Bundled/downloaded Chromium verification, lazy installation, and provider-neutral dynamic-page candidate extraction |
 | `internal/config` | State paths, embedded matcher defaults, and one-time legacy-state migration |
@@ -66,14 +69,15 @@ API. Slices and nested values returned by the engine are caller-owned.
 continues to receive decoded `model.Song` values. `internal/playlist` sits behind
 that boundary; provider IDs, raw candidates, registries, and optimization
 interfaces do not enter the public package or service API. Concrete Kugou,
-Bilibili, browser, matcher, and storage implementations are assembled only in
-`internal/wiring`. Tests can therefore replace external I/O without routing
-through terminal code.
+Apple Music, Bilibili, browser, matcher, and storage implementations are
+assembled only in `internal/wiring`. Tests can therefore replace external I/O
+without routing through terminal code.
 
 The public `ParsePlaylist` and `ParsePlaylistWithOptions` methods, browser-policy
-types, `HTTPClients.Kugou`, and `WithBrowserExtractor` remain compatibility
-boundaries. The injected public browser extractor still returns public `Song`
-values; the root adapter converts them into canonical internal candidates.
+types, `HTTPClients.Kugou`, additive `HTTPClients.AppleMusic`, and
+`WithBrowserExtractor` remain compatibility boundaries. The injected public
+browser extractor still returns public `Song` values; the root adapter converts
+them into canonical internal candidates.
 
 ## Playlist providers and registries
 
@@ -114,6 +118,14 @@ the browser result. Provider data takes precedence, and deduplication retains th
 existing hash and trimmed title/artist semantics. Failed capability attempts
 carry provider ID, capability category, optimization name, and their underlying
 error for internal diagnostics; they do not create a new public error category.
+
+Kugou and Apple Music are currently optimized sources. The Apple Music
+extractor fetches the unauthenticated public share page through the shared
+rate-limited HTTP stack, selects the `trackLockup` section matching the URL's
+playlist ID, and reads its declared `trackCount`. A short server-rendered result
+therefore remains useful partial data while still triggering the common
+Chromium fallback. Apple-specific page structure stays in `internal/applemusic`;
+the shared browser extractor contains only provider-neutral candidate rules.
 
 ## Browser fallback policy
 

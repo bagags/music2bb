@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -324,6 +326,115 @@ func TestCompleteKugouEmbeddedExtractionSkipsInjectedBrowser(t *testing.T) {
 	if browserCalls.Load() != 0 {
 		t.Fatalf("injected browser calls = %d, want 0", browserCalls.Load())
 	}
+}
+
+func TestCompleteAppleMusicExtractionSkipsBrowserWithNeverPolicy(t *testing.T) {
+	var browserCalls atomic.Int32
+	browser := BrowserExtractorFunc(func(context.Context, string) ([]Song, error) {
+		browserCalls.Add(1)
+		return []Song{{Name: "must not be used"}}, nil
+	})
+	appleHTTP := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(appleMusicTestPage("pl.complete", 1, `{"title":"Direct Apple Song","artistName":"Apple Artist","tertiaryLinks":[{"title":"Apple Album"}],"duration":185000}`)), nil
+	})}
+	engine := newTestEngine(t, nil,
+		WithHTTPClients(HTTPClients{AppleMusic: appleHTTP}),
+		WithBrowserExtractor(browser),
+	)
+
+	songs, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://music.apple.com/us/playlist/complete/pl.complete", ParseOptions{BrowserPolicy: BrowserNever}, nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Song{{Name: "Direct Apple Song", Artist: "Apple Artist", Album: "Apple Album", Duration: "3:05"}}
+	if !reflect.DeepEqual(songs, want) {
+		t.Fatalf("songs = %#v, want %#v", songs, want)
+	}
+	if browserCalls.Load() != 0 {
+		t.Fatalf("injected browser calls = %d, want 0", browserCalls.Load())
+	}
+}
+
+func TestIncompleteAndFailedAppleMusicExtractionFollowBrowserPolicy(t *testing.T) {
+	tests := []struct {
+		name       string
+		appleReply *http.Response
+		browser    []Song
+		want       []Song
+	}{
+		{
+			name:       "incomplete merges useful direct songs",
+			appleReply: jsonResponse(appleMusicTestPage("pl.partial", 2, `{"title":"Direct Partial","artistName":"Direct Artist"}`)),
+			browser:    []Song{{Name: "Browser Completion", Artist: "Browser Artist"}},
+			want:       []Song{{Name: "Direct Partial", Artist: "Direct Artist"}, {Name: "Browser Completion", Artist: "Browser Artist"}},
+		},
+		{
+			name: "failed direct extraction uses browser",
+			appleReply: &http.Response{
+				StatusCode: http.StatusNotFound, Status: "404 Not Found", Header: make(http.Header), Body: io.NopCloser(strings.NewReader("missing")),
+			},
+			browser: []Song{{Name: "Browser Only", Artist: "Browser Artist"}},
+			want:    []Song{{Name: "Browser Only", Artist: "Browser Artist"}},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var browserCalls atomic.Int32
+			appleHTTP := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+				return test.appleReply, nil
+			})}
+			browser := BrowserExtractorFunc(func(context.Context, string) ([]Song, error) {
+				browserCalls.Add(1)
+				return append([]Song(nil), test.browser...), nil
+			})
+			engine := newTestEngine(t, nil,
+				WithHTTPClients(HTTPClients{AppleMusic: appleHTTP}),
+				WithBrowserExtractor(browser),
+			)
+			songs, err := engine.ParsePlaylistWithOptions(
+				context.Background(), "https://music.apple.com/us/playlist/test/pl.partial", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(songs, test.want) {
+				t.Fatalf("songs = %#v, want %#v", songs, test.want)
+			}
+			if browserCalls.Load() != 1 {
+				t.Fatalf("injected browser calls = %d, want 1", browserCalls.Load())
+			}
+		})
+	}
+}
+
+func TestUnknownProviderStillUsesGenericBrowser(t *testing.T) {
+	var appleCalls atomic.Int32
+	appleHTTP := &http.Client{Transport: roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		appleCalls.Add(1)
+		return jsonResponse(appleMusicTestPage("pl.unused", 1, `{"title":"Wrong","artistName":"Wrong"}`)), nil
+	})}
+	browser := BrowserExtractorFunc(func(context.Context, string) ([]Song, error) {
+		return []Song{{Name: "Generic Song", Artist: "Generic Artist"}}, nil
+	})
+	engine := newTestEngine(t, nil,
+		WithHTTPClients(HTTPClients{AppleMusic: appleHTTP}),
+		WithBrowserExtractor(browser),
+	)
+	songs, err := engine.ParsePlaylistWithOptions(
+		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
+	)
+	if err != nil || len(songs) != 1 || songs[0].Name != "Generic Song" {
+		t.Fatalf("ParsePlaylistWithOptions = %#v, %v", songs, err)
+	}
+	if appleCalls.Load() != 0 {
+		t.Fatalf("Apple HTTP calls = %d, want 0", appleCalls.Load())
+	}
+}
+
+func appleMusicTestPage(playlistID string, trackCount int, items string) string {
+	return fmt.Sprintf(`<script id="serialized-server-data">{"data":[{"data":{"sections":[{"itemKind":"containerDetailHeaderLockup","items":[{"trackCount":%d,"contentDescriptor":{"kind":"playlist","identifiers":{"storeAdamID":%q}}}]},{"itemKind":"trackLockup","containerContentDescriptor":{"kind":"playlist","identifiers":{"storeAdamID":%q}},"items":[%s]}]}}]}</script>`, trackCount, playlistID, playlistID, items)
 }
 
 func TestMatchPreservesOrderAndSerializesObserver(t *testing.T) {

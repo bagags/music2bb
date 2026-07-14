@@ -53,6 +53,10 @@ func TestPinnedArchiveInstallLaunchAndExtraction(t *testing.T) {
 	page := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fmt.Fprint(w, `<!doctype html><html><body>
+		<ul class="featured-artists">
+		  <li data-index="0"><h3>Carousel Artist One</h3></li>
+		  <li data-index="1"><h4>Carousel Artist Two</h4></li>
+		</ul>
         <div class="song-item">
           <div class="song-name">DOM Smoke Song</div>
           <div class="artist">DOM Artist</div>
@@ -98,6 +102,11 @@ func TestPinnedArchiveInstallLaunchAndExtraction(t *testing.T) {
 	if len(songs) != 2 || songs[0].Name != "Browser Smoke Song" || songs[0].Artist != "Smoke Artist" ||
 		songs[1].Name != "DOM Smoke Song" || songs[1].Artist != "DOM Artist" {
 		t.Fatalf("unexpected extracted songs: %#v", songs)
+	}
+	for _, song := range songs {
+		if song.Name == "Carousel Artist One" || song.Name == "Carousel Artist Two" {
+			t.Fatalf("artist carousel was extracted as tracks: %#v", songs)
+		}
 	}
 }
 

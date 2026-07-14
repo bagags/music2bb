@@ -31,13 +31,14 @@ func New(cfg Config, options ...Option) (*Engine, error) {
 		}
 	}
 	wiringOptions := wiring.Options{
-		State:         config.Options{Dir: cfg.ConfigDir, CacheDir: cfg.CacheDir},
-		RatePerSecond: cfg.RatePerSecond,
-		HTTPTimeout:   cfg.HTTPTimeout,
-		Limiter:       resolved.limiter,
-		KugouHTTP:     resolved.http.Kugou,
-		AccountHTTP:   resolved.http.BilibiliAccount,
-		SearchHTTP:    resolved.http.BilibiliSearch,
+		State:          config.Options{Dir: cfg.ConfigDir, CacheDir: cfg.CacheDir},
+		RatePerSecond:  cfg.RatePerSecond,
+		HTTPTimeout:    cfg.HTTPTimeout,
+		Limiter:        resolved.limiter,
+		KugouHTTP:      resolved.http.Kugou,
+		AppleMusicHTTP: resolved.http.AppleMusic,
+		AccountHTTP:    resolved.http.BilibiliAccount,
+		SearchHTTP:     resolved.http.BilibiliSearch,
 	}
 	if resolved.clock != nil {
 		wiringOptions.Now = resolved.clock.Now

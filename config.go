@@ -45,6 +45,7 @@ type MatchOptions struct {
 
 type HTTPClients struct {
 	Kugou           *http.Client
+	AppleMusic      *http.Client
 	BilibiliAccount *http.Client
 	BilibiliSearch  *http.Client
 }

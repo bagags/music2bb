@@ -362,6 +362,15 @@ const extractTracksJS = `() => {
     const artist = firstText(['[class*="singer"]', '[class*="artist"]', '.singername', '.singer_name', '[class*="author"]', '.artist', '[class*="singerName"]']);
     const visibleText = (item.innerText || '').trim();
     if (!name && !visibleText) continue;
+    const highConfidence = item.matches([
+      '.song-item', '.list_content li', '[class*="songItem"]', '[class*="song-item"]',
+      '.music-item', '.track-item', '[class*="trackItem"]', '[class*="musicItem"]',
+      'li[data-songid]', '[class*="songRow"]', '[class*="song_row"]'
+    ].join(','));
+    if (!highConfidence) {
+      const songEvidence = item.hasAttribute('data-songid') || Boolean(item.querySelector('a[href*="/song/"]'));
+      if (!(name && artist) && !songEvidence) continue;
+    }
     const fields = Object.create(null);
     if (name) fields.name = name;
     if (artist) fields.artist = artist;

@@ -1,0 +1,50 @@
+<!doctype html><html><body>
+<script type="application/json" id="serialized-server-data">{
+  "data": [{"data": {"sections": [
+    {
+      "id": "unrelated-tracks",
+      "itemKind": "trackLockup",
+      "containerContentDescriptor": {"kind": "playlist", "identifiers": {"storeAdamID": "pl.other"}},
+      "items": [{"title": "Wrong Playlist", "artistName": "Wrong Artist", "duration": 1000}]
+    },
+    {
+      "id": "playlist-header",
+      "itemKind": "containerDetailHeaderLockup",
+      "items": [{
+        "title": "Fixture Playlist",
+        "trackCount": 5,
+        "contentDescriptor": {"kind": "playlist", "identifiers": {"storeAdamID": "pl.fixture"}}
+      }]
+    },
+    {
+      "id": "track-list - pl.fixture",
+      "itemKind": "trackLockup",
+      "containerContentDescriptor": {"kind": "playlist", "identifiers": {"storeAdamID": "pl.fixture"}},
+      "items": [
+        {
+          "title": "First Song",
+          "name": "Wrong Name",
+          "artistName": "First Artist",
+          "subtitleLinks": [{"title": "Fallback Artist"}],
+          "tertiaryLinks": [{"title": "First Album"}, {"title": "Ignored Album"}],
+          "duration": 185999
+        },
+        {
+          "title": "Collaboration",
+          "artistName": "",
+          "subtitleLinks": [{"title": "Artist One"}, {"title": "Artist Two"}],
+          "tertiaryLinks": [{"title": "Shared Album"}],
+          "duration": "61000"
+        },
+        {"title": "Duplicate Title", "artistName": "Artist A", "duration": 120000},
+        {"title": "Duplicate Title", "artistName": "Artist B", "duration": 121000},
+        {
+          "title": "This deliberately very long Apple Music track title is more than one hundred characters and must remain intact in direct extraction",
+          "artistName": "Long Artist",
+          "duration": 60000
+        }
+      ]
+    }
+  ]}}]
+}</script>
+</body></html>

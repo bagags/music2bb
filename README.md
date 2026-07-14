@@ -6,6 +6,7 @@
 
 - 自动识别歌单来源，优先使用已注册的来源优化；HTTP 解析失败或不完整时自动通知并切换到受控 Chromium
 - 保留酷狗直连 API、页面 JSON、分页、签名和歌曲清理优化
+- 使用 Apple Music 公开分享页的服务端序列化数据直接解析歌单，无需账号或 API 凭据
 - Bilibili 扫码登录、Cookie 持久化、WBI 签名和收藏夹管理
 - 关键词、音质、官方来源、热度和 UP 主权重综合评分
 - 默认 4 个受限并发 worker，保持输入与结果顺序
@@ -82,7 +83,7 @@ music2bb convert '<playlist-url>' --top-k 5 --manual-review
 
 ## 歌单解析与 Chromium 回退
 
-程序根据原始 HTTP(S) URL 自动识别歌单来源，不需要也不提供 `--provider`。已识别来源会先运行已注册的优化；当前酷狗优化保留直连 API、页面数据和既有解析顺序。未知来源或没有歌单提取优化的来源，在策略允许时直接使用通用 Chromium 提取。只有来源优化结果为空或少于页面声明总数时才触发浏览器回退；合并时来源优化结果优先，并保留可用的部分歌单。
+程序根据原始 HTTP(S) URL 自动识别歌单来源，不需要也不提供 `--provider`。已识别来源会先运行已注册的优化；酷狗优化保留直连 API、页面数据和既有解析顺序，Apple Music 优化读取公开分享页中的 `serialized-server-data`，按页面顺序解析曲名、艺人、专辑、时长和声明总数，不需要 Apple API 凭据。未知来源或没有歌单提取优化的来源，在策略允许时直接使用通用 Chromium 提取。只有来源优化失败、结果为空或少于页面声明总数时才触发浏览器回退；合并时来源优化结果优先，并保留可用的部分歌单。
 
 | `--browser` | 处理方式 |
 |---|---|
@@ -151,8 +152,9 @@ go vet ./...
 
 ```bash
 MUSIC2BB_TEST_KUGOU_URL='<playlist-url>' \
+MUSIC2BB_TEST_APPLE_MUSIC_URL='<apple-music-playlist-url>' \
 MUSIC2BB_TEST_BVID='BV1xx411c7mD' \
-go test -count=1 -tags=live ./internal/kugou ./internal/bilibili
+go test -count=1 -tags=live ./internal/kugou ./internal/applemusic ./internal/bilibili
 ```
 
 使用已下载的固定 Chromium 归档运行安装、启动和动态页面提取：

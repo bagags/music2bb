@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gguage/music-to-bb/internal/applemusic"
 	"github.com/gguage/music-to-bb/internal/bilibili"
 	"github.com/gguage/music-to-bb/internal/browser"
 	"github.com/gguage/music-to-bb/internal/config"
@@ -27,6 +28,7 @@ type Options struct {
 	HTTPTimeout      time.Duration
 	Limiter          netx.Limiter
 	KugouHTTP        *http.Client
+	AppleMusicHTTP   *http.Client
 	AccountHTTP      *http.Client
 	SearchHTTP       *http.Client
 	Now              func() time.Time
@@ -81,24 +83,31 @@ func New(options Options) (*Components, error) {
 		kugouHTTP.HTTP = options.KugouHTTP
 	}
 	directKugou := kugou.New(kugouHTTP)
+	appleMusicHTTP := netx.New(timeout, 8, limiter)
+	if options.AppleMusicHTTP != nil {
+		appleMusicHTTP.HTTP = options.AppleMusicHTTP
+	}
+	directAppleMusic := applemusic.New(appleMusicHTTP)
 	extractor := options.BrowserExtractor
 	if extractor == nil {
 		extractor = browser.NewExtractor(manager)
 	}
-	identification, err := playlist.NewIdentificationRegistry(playlist.IdentificationRegistration{
-		ProviderID: kugou.ProviderID,
-		Identifier: kugou.Identifier(),
-	})
+	identification, err := playlist.NewIdentificationRegistry(
+		kugou.IdentificationRegistration(),
+		applemusic.IdentificationRegistration(),
+	)
 	if err != nil {
 		kugouHTTP.CloseIdleConnections()
+		appleMusicHTTP.CloseIdleConnections()
 		return nil, err
 	}
-	optimizations, err := playlist.NewOptimizationRegistry(playlist.OptimizationRegistration{
-		ProviderID:    kugou.ProviderID,
-		Optimizations: kugou.Optimizations(directKugou),
-	})
+	optimizations, err := playlist.NewOptimizationRegistry(
+		kugou.OptimizationRegistration(directKugou),
+		applemusic.OptimizationRegistration(directAppleMusic),
+	)
 	if err != nil {
 		kugouHTTP.CloseIdleConnections()
+		appleMusicHTTP.CloseIdleConnections()
 		return nil, err
 	}
 	coordinator := playlist.NewCoordinator(identification, optimizations, extractor)
@@ -115,6 +124,7 @@ func New(options Options) (*Components, error) {
 	})
 	if err != nil {
 		kugouHTTP.CloseIdleConnections()
+		appleMusicHTTP.CloseIdleConnections()
 		return nil, err
 	}
 	scorer := matcher.New(matcher.Options{
@@ -133,6 +143,7 @@ func New(options Options) (*Components, error) {
 	if err != nil {
 		bili.CloseIdleConnections()
 		kugouHTTP.CloseIdleConnections()
+		appleMusicHTTP.CloseIdleConnections()
 		return nil, err
 	}
 	return &Components{
@@ -142,6 +153,7 @@ func New(options Options) (*Components, error) {
 		close: func() {
 			bili.CloseIdleConnections()
 			kugouHTTP.CloseIdleConnections()
+			appleMusicHTTP.CloseIdleConnections()
 		},
 	}, nil
 }
