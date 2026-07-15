@@ -956,7 +956,8 @@ func (m tuiModel) render() string {
 	} else {
 		body = m.renderWorkspace(width, bodyHeight)
 	}
-	footer := ansi.TruncateWc(m.renderFooter(), width, "…")
+	footerText := strings.ReplaceAll(strings.ReplaceAll(m.renderFooter(), "\r", " "), "\n", " ")
+	footer := fixedSize(ansi.TruncateWc(footerText, width, "…"), width, 1)
 	return header + "\n" + body + "\n" + footer
 }
 
@@ -971,28 +972,26 @@ func (m tuiModel) renderHeader(width int) string {
 	if m.colorEnabled {
 		style = style.Bold(true).Foreground(m.pickColor("#17324D", "#D7E9FF")).Background(m.pickColor("#DCEEFF", "#20354D"))
 	}
-	return style.Width(maxInt(0, width-2)).Render(ansi.TruncateWc(text, maxInt(1, width-2), "…"))
+	return style.Width(maxInt(1, width)).Render(ansi.TruncateWc(text, maxInt(1, width-2), "…"))
 }
 
 func (m tuiModel) renderWorkspace(width, height int) string {
 	if m.overlay != overlayNone {
 		return m.renderOverlay(width, height)
 	}
-	left := m.renderSongs()
-	right := m.renderDetails(maxInt(20, width*2/3-4))
 	if width >= 80 {
 		leftWidth := width / 3
 		rightWidth := width - leftWidth
 		return lipgloss.JoinHorizontal(lipgloss.Top,
-			m.paneStyle(leftWidth, height, m.songCursor >= 0).Render(left),
-			m.paneStyle(rightWidth, height, true).Render(right),
+			m.renderPane(leftWidth, height, m.songCursor >= 0, m.renderSongs(leftWidth-4, height-2)),
+			m.renderPane(rightWidth, height, true, m.renderDetails(rightWidth-4, height-2)),
 		)
 	}
-	content := left
+	content := m.renderSongs(width-4, height-2)
 	if m.compactPane == 1 {
-		content = right
+		content = m.renderDetails(width-4, height-2)
 	}
-	return m.paneStyle(width, height, true).Render(content)
+	return m.renderPane(width, height, true, content)
 }
 
 func (m tuiModel) paneStyle(width, height int, active bool) lipgloss.Style {
@@ -1001,14 +1000,20 @@ func (m tuiModel) paneStyle(width, height int, active bool) lipgloss.Style {
 		borderColor = m.pickColor("#276FBF", "#69A7E7")
 	}
 	style := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).Padding(0, 1).
-		Width(maxInt(1, width-4)).Height(maxInt(1, height-2))
+		Width(maxInt(1, width)).Height(maxInt(1, height))
 	if m.colorEnabled {
 		style = style.BorderForeground(borderColor)
 	}
 	return style
 }
 
-func (m tuiModel) renderSongs() string {
+func (m tuiModel) renderPane(width, height int, active bool, content string) string {
+	style := m.paneStyle(width, height, active)
+	content = fixedSize(content, width-style.GetHorizontalFrameSize(), height-style.GetVerticalFrameSize())
+	return style.Render(content)
+}
+
+func (m tuiModel) renderSongs(width, height int) string {
 	if len(m.songs) == 0 {
 		if m.qr != "" {
 			return "登录二维码\n\n" + m.qr
@@ -1031,13 +1036,13 @@ func (m tuiModel) renderSongs() string {
 		}
 		lines[index] = line
 	}
-	vp := viewport.New(viewport.WithWidth(40), viewport.WithHeight(maxInt(3, m.height-5)))
+	vp := viewport.New(viewport.WithWidth(maxInt(1, width)), viewport.WithHeight(maxInt(1, height)))
 	vp.SetContent(strings.Join(lines, "\n"))
 	vp.SetYOffset(maxInt(0, m.songCursor-vp.Height()/2))
 	return vp.View()
 }
 
-func (m tuiModel) renderDetails(width int) string {
+func (m tuiModel) renderDetails(width, height int) string {
 	switch m.phase {
 	case phaseLogin, phaseParse, phaseMatch:
 		text := m.phaseText
@@ -1088,7 +1093,7 @@ func (m tuiModel) renderDetails(width int) string {
 		fmt.Fprintf(&b, "    UP: %s  时长: %s  %s\n", fallback(candidate.Video.Uploader, "—"), fallback(candidate.Video.Duration, "—"), candidate.Video.BVID)
 		fmt.Fprintf(&b, "    %s\n\n", candidate.Video.URL())
 	}
-	vp := viewport.New(viewport.WithWidth(maxInt(20, width)), viewport.WithHeight(maxInt(3, m.height-5)))
+	vp := viewport.New(viewport.WithWidth(maxInt(1, width)), viewport.WithHeight(maxInt(1, height)))
 	vp.SetContent(strings.TrimRight(b.String(), "\n"))
 	return vp.View()
 }
@@ -1157,12 +1162,21 @@ func (m tuiModel) renderOverlay(width, height int) string {
 		footer = "? / Enter / Esc 关闭"
 	}
 	boxWidth := minInt(maxInt(34, width-8), 70)
-	box := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2).Width(boxWidth - 6)
+	boxHeight := minInt(height, 18)
+	box := lipgloss.NewStyle().Border(lipgloss.DoubleBorder()).Padding(1, 2).
+		Width(boxWidth).Height(boxHeight)
 	if m.colorEnabled {
 		box = box.BorderForeground(m.pickColor("#276FBF", "#7DB8F2"))
 	}
-	body := title + "\n\n" + content + "\n\n" + footer
+	body := fixedSize(title+"\n\n"+content+"\n\n"+footer,
+		boxWidth-box.GetHorizontalFrameSize(), boxHeight-box.GetVerticalFrameSize())
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, box.Render(body))
+}
+
+func fixedSize(content string, width, height int) string {
+	width = maxInt(1, width)
+	height = maxInt(1, height)
+	return lipgloss.NewStyle().Width(width).Height(height).MaxWidth(width).MaxHeight(height).Render(content)
 }
 
 func (m tuiModel) renderFooter() string {

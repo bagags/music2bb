@@ -314,6 +314,76 @@ func TestTUIResponsiveRenderSnapshots(t *testing.T) {
 	}
 }
 
+func TestTUIFixedEdgesIgnoreContentLength(t *testing.T) {
+	model, cleanup := testTUIModel(t)
+	defer cleanup()
+	model.width, model.height = 80, 20
+	model.colorEnabled = false
+	model.phase = phaseError
+
+	assertFixedScreen := func(name, rendered string) {
+		t.Helper()
+		lines := strings.Split(rendered, "\n")
+		if len(lines) != model.height {
+			t.Fatalf("%s height = %d, want %d:\n%s", name, len(lines), model.height, rendered)
+		}
+		for index, line := range lines {
+			if width := lipgloss.Width(line); width != model.width {
+				t.Fatalf("%s line %d width = %d, want %d: %q", name, index, width, model.width, line)
+			}
+		}
+		if !strings.HasPrefix(lines[1], "╭") || !strings.HasPrefix(lines[model.height-2], "╰") {
+			t.Fatalf("%s pane borders moved or were clipped:\n%s", name, rendered)
+		}
+	}
+
+	model.validation = "short error"
+	assertFixedScreen("short content", model.render())
+	model.validation = strings.Repeat("a much longer error message ", 200)
+	assertFixedScreen("long content", model.render())
+
+	model.validation = ""
+	model.phase = phaseFavorite
+	model.favorites = make([]music2bb.Favorite, 100)
+	for index := range model.favorites {
+		model.favorites[index] = music2bb.Favorite{Title: strings.Repeat("收藏夹", 30)}
+	}
+	assertFixedScreen("many favorites", model.render())
+}
+
+func TestTUIOverlayEdgesDependOnlyOnScreenSize(t *testing.T) {
+	model, cleanup := testTUIModel(t)
+	defer cleanup()
+	model.width, model.height = 80, 20
+	model.colorEnabled = false
+
+	boxRows := func(rendered string) (int, int) {
+		t.Helper()
+		top, bottom := -1, -1
+		for index, line := range strings.Split(rendered, "\n") {
+			if strings.Contains(line, "╔") {
+				top = index
+			}
+			if strings.Contains(line, "╚") {
+				bottom = index
+			}
+		}
+		if top < 0 || bottom < 0 {
+			t.Fatalf("overlay border was clipped:\n%s", rendered)
+		}
+		return top, bottom
+	}
+
+	model.overlay = overlaySearch
+	searchTop, searchBottom := boxRows(model.render())
+	model.overlay = overlayHelp
+	helpTop, helpBottom := boxRows(model.render())
+	if searchTop != helpTop || searchBottom != helpBottom {
+		t.Fatalf("overlay edges changed at %dx%d: search=%d..%d help=%d..%d",
+			model.width, model.height, searchTop, searchBottom, helpTop, helpBottom)
+	}
+}
+
 func TestTUIControllerOrdersEventsAndCloses(t *testing.T) {
 	session := newConversionSession(&fakeBackend{}, nil, "https://example.test", convertOptions{}, music2bb.BrowserAuto)
 	controller := newTUIController(context.Background(), session)
