@@ -192,7 +192,7 @@ func contextCause(ctx context.Context, fallback error) error {
 	return fallback
 }
 
-// PlaylistID applies the Python reference's specialid/global_specialid rules.
+// PlaylistID applies the supported specialid/global_specialid rules.
 func PlaylistID(rawURL string) string {
 	return playlistIdentity(rawURL).ID
 }

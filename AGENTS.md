@@ -2,13 +2,13 @@
 
 ## Project Structure & Module Organization
 
-This is a Go 1.26 module. The module root (`engine.go`, `types.go`, and related files) is the stable public `music2bb` package. `cmd/music2bb` contains process startup for the CLI, while `internal/cli` owns command parsing and terminal interaction. Core orchestration lives in `internal/service`; concrete Kugou, Bilibili, browser, matcher, configuration, and HTTP implementations live in their corresponding `internal/*` packages and are assembled by `internal/wiring`. Keep site-specific protocols out of the public package. Architecture details are in `docs/architecture.md`. Fixtures belong in package-local `testdata/` directories or the root `testdata/` parity set.
+This is a Go 1.26 module. The module root (`engine.go`, `types.go`, and related files) is the stable public `music2bb` package. `cmd/music2bb` contains process startup for the CLI, while `internal/cli` owns command parsing and terminal interaction. Core orchestration lives in `internal/service`; concrete Kugou, Bilibili, browser, matcher, configuration, and HTTP implementations live in their corresponding `internal/*` packages and are assembled by `internal/wiring`. Keep site-specific protocols out of the public package. Architecture details are in `docs/architecture.md`. Fixtures belong in package-local `testdata/` directories.
 
 ## Build, Test, and Development Commands
 
 - `go build -trimpath -o music2bb ./cmd/music2bb` builds the local CLI.
 - `go run ./cmd/music2bb version` runs a command without creating a binary.
-- `go test ./...` runs deterministic unit, fixture, boundary, and parity tests.
+- `go test ./...` runs deterministic unit, fixture, and boundary tests.
 - `go test -race ./...` checks concurrency-sensitive code.
 - `go vet ./...` performs the static checks required by CI.
 - `go test -run '^$' -tags='live authenticated browser_install' ./...` verifies that optional tagged tests compile.

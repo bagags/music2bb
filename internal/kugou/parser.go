@@ -56,9 +56,9 @@ func ExtractEmbeddedTracks(pageHTML string) []playlist.TrackCandidate {
 	return nil
 }
 
-// ExtractEmbeddedSongs is retained for fixture and parity callers. Production
-// ingestion uses ExtractEmbeddedTracks and decodes through registered title
-// capabilities.
+// ExtractEmbeddedSongs is retained for direct decoding callers and tests.
+// Production ingestion uses ExtractEmbeddedTracks and decodes through
+// registered title capabilities.
 func ExtractEmbeddedSongs(pageHTML string) []model.Song {
 	return playlist.DecodeTracks(ExtractEmbeddedTracks(pageHTML), []playlist.TitleExtractor{NewTitleExtractor()})
 }

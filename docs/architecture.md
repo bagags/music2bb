@@ -56,7 +56,6 @@ consumers outside this module.
 | `internal/browser` | Bundled/downloaded Chromium verification, lazy installation, and provider-neutral dynamic-page candidate extraction |
 | `internal/config` | State paths, embedded matcher defaults, and one-time legacy-state migration |
 | `internal/netx` | Shared HTTP retry, concurrency, and rate-limit behavior |
-| `internal/parity` | Cross-package compatibility tests against the captured Python behavior |
 
 ## Public and internal data
 
@@ -190,7 +189,7 @@ defaults.
 
 ## Test tiers
 
-- `go test ./...` runs unit, fixture, boundary, and Python-parity tests without
+- `go test ./...` runs unit, fixture, and boundary tests without
   requiring authenticated remote writes.
 - `go test -race ./...` validates concurrent matching, observers, clients, and
   injected dependencies.

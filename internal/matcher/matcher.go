@@ -1,6 +1,6 @@
-// Package matcher ranks Bilibili candidates using the behavior of the Python
-// reference implementation. Matcher instances own immutable configuration and
-// are safe for concurrent use when callers do not share mutable Video values.
+// Package matcher ranks Bilibili candidates using configurable scoring
+// components. Matcher instances own immutable configuration and are safe for
+// concurrent use when callers do not share mutable Video values.
 package matcher
 
 import (
@@ -27,7 +27,7 @@ var (
 )
 
 // Weights controls the four normalized components. UP scores are added
-// directly, matching the Python formula.
+// directly rather than normalized and weighted.
 type Weights struct {
 	Keyword    float64
 	Quality    float64
@@ -35,7 +35,7 @@ type Weights struct {
 	Popularity float64
 }
 
-// DefaultWeights returns the Python reference weights.
+// DefaultWeights returns the standard matcher weights.
 func DefaultWeights() Weights {
 	return Weights{Keyword: 40, Quality: 25, Official: 20, Popularity: 15}
 }
@@ -57,7 +57,7 @@ type Matcher struct {
 }
 
 // New constructs an independent matcher. A zero Weights value selects the
-// Python defaults; partially specified weights intentionally leave other
+// standard defaults; partially specified weights intentionally leave other
 // components at zero.
 func New(options Options) *Matcher {
 	weights := options.Weights
@@ -321,7 +321,7 @@ func (m *Matcher) Decide(song model.Song, ranked []model.MatchResult, finalPhase
 	return decision
 }
 
-// FuzzyContains reproduces the Python sliding-window 80-percent comparison.
+// FuzzyContains applies a sliding-window 80-percent comparison.
 func FuzzyContains(text, target string) bool {
 	textRunes := []rune(cleanForMatch(text))
 	targetRunes := []rune(cleanForMatch(target))

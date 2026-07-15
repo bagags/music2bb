@@ -15,7 +15,9 @@ func TestSongCleanName(t *testing.T) {
 		{name: "trim", in: "  Hello  ", want: "Hello"},
 		{name: "from suffix", in: `Try Everything (From "Zootopia 2")`, want: "Try Everything Zootopia"},
 		{name: "from suffix unicode digits", in: `Song (From "Album ２")`, want: "Song Album"},
+		{name: "combined suffixes", in: `Try Everything (From "Zootopia 2") (Live) feat. X - Y`, want: "Try Everything"},
 		{name: "bracket suffixes", in: "Song（Live） [translation] 【PV】", want: "Song"},
+		{name: "punctuation around removed group", in: "World.execute(me); [Live]", want: "World.execute ;"},
 		{name: "feature", in: "Song FEAT. Singer", want: "Song"},
 		{name: "hyphen", in: "Song - Singer", want: "Song"},
 		{name: "collapse unicode spaces", in: "Song\u3000  Name", want: "Song Name"},
@@ -70,6 +72,12 @@ func TestSongSearchKeywords(t *testing.T) {
 				"If I Can Stop One Heart From Breaking Robin",
 				"If I Can Stop One Heart From Breaking 知更鸟",
 			},
+		},
+		{
+			name: "miku aliases retain bounded order",
+			song: Song{Name: "Song [Live]【中字】（翻译）", Artist: "初音ミク & foo"},
+			full: "Song 初音ミク",
+			all:  []string{"Song 初音ミク", "Song 初音未来", "Song Miku"},
 		},
 		{
 			name: "name only",

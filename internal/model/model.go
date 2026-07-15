@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// QualityLevel mirrors the levels understood by the Python implementation.
+// QualityLevel classifies candidate audio quality.
 type QualityLevel int
 
 const (
@@ -89,8 +89,8 @@ type artistAlias struct {
 	aliases []string
 }
 
-// Keep this ordered. Python dictionaries preserve insertion order and the
-// first matching entry wins, including HOYO matching before HOYO-MiX.
+// Keep this ordered because the first matching entry wins, including HOYO
+// matching before HOYO-MiX.
 var artistAliases = []artistAlias{
 	{needle: "知更鸟", aliases: []string{"Robin", "知更鸟", "崩坏星穹铁道"}},
 	{needle: "HOYO", aliases: []string{"HOYO-MiX", "米哈游", "miHoYo"}},
@@ -99,8 +99,9 @@ var artistAliases = []artistAlias{
 	{needle: "ミク", aliases: []string{"初音未来", "Miku"}},
 }
 
-// Python's Unicode-aware \s includes separator runes plus these ASCII and NEL
-// controls. Keeping the class explicit avoids Go regexp's ASCII-only \s.
+// Normalization treats Unicode separator runes plus these ASCII and NEL
+// controls as whitespace. Keeping the class explicit avoids Go regexp's
+// ASCII-only \s.
 const whitespaceClass = `[\p{Z}\t\n\f\r\x0B\x{0085}]`
 
 var (
@@ -118,8 +119,8 @@ var (
 	artistWideParentheses  = regexp.MustCompile(`（[^）]*）`)
 )
 
-// CleanName preserves the exact normalization order used by the Python
-// reference. In particular, a From suffix is extracted before other suffixes.
+// CleanName applies suffix normalization in a deterministic order. In
+// particular, a From suffix is extracted before other suffixes.
 func (s Song) CleanName() string {
 	name := strings.TrimSpace(s.Name)
 	if match := fromTitlePattern.FindStringSubmatch(name); len(match) == 2 {
@@ -140,8 +141,8 @@ func (s Song) CleanName() string {
 	return strings.TrimSpace(spacesPattern.ReplaceAllString(name, " "))
 }
 
-// CleanArtist selects the first primary artist while retaining the HOYO and
-// miHoYo search cues that the Python reference preserves.
+// CleanArtist selects the first primary artist while retaining HOYO and miHoYo
+// search cues.
 func (s Song) CleanArtist() string {
 	artist := strings.TrimSpace(s.Artist)
 	keepCandidates := []string{"HOYO", "Hoyo", "hoyo", "米哈游", "miHoYo", "mihoyo"}
@@ -175,7 +176,7 @@ func (s Song) SearchKeyword() string {
 
 // SearchKeywordFull is the primary name-and-artist query. Artist aliases are
 // generated for fallback searches, but the original cleaned artist remains
-// the primary query for Python parity.
+// the primary query.
 func (s Song) SearchKeywordFull() string {
 	name := s.CleanName()
 	artist := s.CleanArtist()
@@ -185,7 +186,7 @@ func (s Song) SearchKeywordFull() string {
 	return name + " " + artist
 }
 
-// AllSearchKeywords returns up to three queries in Python-compatible order.
+// AllSearchKeywords returns up to three queries in deterministic priority order.
 func (s Song) AllSearchKeywords() []string {
 	name := s.CleanName()
 	artist := s.CleanArtist()

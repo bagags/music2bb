@@ -151,11 +151,21 @@ func TestMatchRankingThresholdAndTopK(t *testing.T) {
 	if results[0].Video.BVID != "best" {
 		t.Errorf("first result = %q, want best", results[0].Video.BVID)
 	}
+	if results[0].Score != 77.75 {
+		t.Errorf("best score = %v, want 77.75", results[0].Score)
+	}
 	if results[1].Video.BVID != "threshold" {
 		t.Fatalf("second result = %q, want threshold", results[1].Video.BVID)
 	}
-	if results[1].KeywordScore != 20 || !results[1].Matched {
-		t.Errorf("threshold result = score %v matched %v", results[1].KeywordScore, results[1].Matched)
+	if results[1].Score != 8 || results[1].KeywordScore != 20 || !results[1].Matched {
+		t.Errorf("threshold result = total %v keyword %v matched %v", results[1].Score, results[1].KeywordScore, results[1].Matched)
+	}
+	allResults := m.Match(song, videos, len(videos))
+	if len(allResults) != 3 {
+		t.Fatalf("all results length = %d, want 3 unblocked candidates", len(allResults))
+	}
+	if got := allResults[2]; got.Video.BVID != "below" || got.Matched {
+		t.Errorf("unmatched result = video %q matched %v", got.Video.BVID, got.Matched)
 	}
 	if got := m.Match(song, videos, 0); len(got) != 0 {
 		t.Errorf("topK zero returned %d results", len(got))
