@@ -74,6 +74,13 @@ func TestTUIReviewKeyBindingsAndOverride(t *testing.T) {
 	if !model.outcomes[1].HasSelection || model.outcomes[1].Video.BVID != "BV-alt" || !model.outcomes[1].ManualOverride {
 		t.Fatalf("candidate override = %#v", model.outcomes[1])
 	}
+	rendered := strings.Split(model.render(), "\n")
+	if !strings.Contains(rendered[len(rendered)-2], "已接受当前候选") {
+		t.Fatalf("selection feedback is missing above guide:\n%s", strings.Join(rendered, "\n"))
+	}
+	if !strings.Contains(rendered[len(rendered)-1], "Enter 接受") {
+		t.Fatalf("review guide disappeared after selection:\n%s", strings.Join(rendered, "\n"))
+	}
 	model = pressTUI(t, model, "u")
 	if model.outcomes[1].HasSelection || !model.outcomes[1].NeedsReview {
 		t.Fatalf("undo did not restore unresolved state: %#v", model.outcomes[1])
@@ -366,7 +373,7 @@ func TestTUIFixedEdgesIgnoreContentLength(t *testing.T) {
 				t.Fatalf("%s line %d width = %d, want %d: %q", name, index, width, model.width, line)
 			}
 		}
-		if !strings.HasPrefix(lines[1], "╭") || !strings.HasPrefix(lines[model.height-2], "╰") {
+		if !strings.HasPrefix(lines[1], "╭") || !strings.HasPrefix(lines[model.height-3], "╰") {
 			t.Fatalf("%s pane borders moved or were clipped:\n%s", name, rendered)
 		}
 	}

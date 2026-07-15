@@ -945,7 +945,7 @@ func (m tuiModel) render() string {
 		height = 24
 	}
 	header := m.renderHeader(width)
-	bodyHeight := height - 2
+	bodyHeight := height - 3
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -956,9 +956,14 @@ func (m tuiModel) render() string {
 	} else {
 		body = m.renderWorkspace(width, bodyHeight)
 	}
-	footerText := strings.ReplaceAll(strings.ReplaceAll(m.renderFooter(), "\r", " "), "\n", " ")
-	footer := fixedSize(ansi.TruncateWc(footerText, width, "…"), width, 1)
-	return header + "\n" + body + "\n" + footer
+	status := m.renderBottomLine(m.validation, width)
+	guide := m.renderBottomLine(m.renderFooter(), width)
+	return header + "\n" + body + "\n" + status + "\n" + guide
+}
+
+func (m tuiModel) renderBottomLine(text string, width int) string {
+	text = strings.ReplaceAll(strings.ReplaceAll(text, "\r", " "), "\n", " ")
+	return fixedSize(ansi.TruncateWc(text, width, "…"), width, 1)
 }
 
 func (m tuiModel) renderHeader(width int) string {
@@ -1209,9 +1214,6 @@ func fixedSize(content string, width, height int) string {
 }
 
 func (m tuiModel) renderFooter() string {
-	if m.validation != "" {
-		return " " + m.validation
-	}
 	switch m.phase {
 	case phaseReview:
 		return " ←/→ 歌曲  ↑/↓ 候选  Enter 接受  Tab 下一待审  s 搜索  x 跳过  u 清除  c 继续  ? 帮助  q 取消"
