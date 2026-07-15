@@ -1020,26 +1020,55 @@ func (m tuiModel) renderSongs(width, height int) string {
 		}
 		return m.phaseText + "\n\n等待歌曲列表…"
 	}
-	lines := make([]string, len(m.songs))
-	for index, song := range m.songs {
-		marker := "  "
+	blocks := make([]string, len(m.songs))
+	selectedStart := 0
+	selectedHeight := 1
+	lineOffset := 0
+	for index := range m.songs {
+		block := m.renderSong(index, width)
+		blocks[index] = block
+		blockHeight := lipgloss.Height(block)
 		if index == m.songCursor {
-			marker = "› "
+			selectedStart = lineOffset
+			selectedHeight = blockHeight
 		}
-		status := m.songStatus(index)
-		line := fmt.Sprintf("%s%3d %s  %s", marker, index+1, status, song.Name)
-		if song.Artist != "" {
-			line += " — " + song.Artist
-		}
-		if index == m.songCursor && m.colorEnabled {
-			line = lipgloss.NewStyle().Bold(true).Foreground(m.pickColor("#185F9D", "#8CC8FF")).Render(line)
-		}
-		lines[index] = line
+		lineOffset += blockHeight
 	}
 	vp := viewport.New(viewport.WithWidth(maxInt(1, width)), viewport.WithHeight(maxInt(1, height)))
-	vp.SetContent(strings.Join(lines, "\n"))
-	vp.SetYOffset(maxInt(0, m.songCursor-vp.Height()/2))
+	vp.SetContent(strings.Join(blocks, "\n"))
+	selectedPadding := maxInt(0, (vp.Height()-selectedHeight)/2)
+	vp.SetYOffset(maxInt(0, selectedStart-selectedPadding))
 	return vp.View()
+}
+
+func (m tuiModel) renderSong(index, width int) string {
+	song := m.songs[index]
+	selected := index == m.songCursor
+	marker := "  "
+	if selected {
+		marker = "› "
+	}
+	prefix := fmt.Sprintf("%s%3d %s  ", marker, index+1, m.songStatus(index))
+	text := song.Name
+	if selected && song.Artist != "" {
+		text += " — " + song.Artist
+	}
+
+	prefixWidth := lipgloss.Width(prefix)
+	wrapped := strings.Split(ansi.WrapWc(text, maxInt(1, width-prefixWidth), ""), "\n")
+	continuation := strings.Repeat(" ", prefixWidth)
+	for lineIndex := range wrapped {
+		if lineIndex == 0 {
+			wrapped[lineIndex] = prefix + wrapped[lineIndex]
+		} else {
+			wrapped[lineIndex] = continuation + wrapped[lineIndex]
+		}
+	}
+	block := strings.Join(wrapped, "\n")
+	if selected && m.colorEnabled {
+		block = lipgloss.NewStyle().Bold(true).Foreground(m.pickColor("#185F9D", "#8CC8FF")).Render(block)
+	}
+	return block
 }
 
 func (m tuiModel) renderDetails(width, height int) string {

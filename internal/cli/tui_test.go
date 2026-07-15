@@ -314,6 +314,40 @@ func TestTUIResponsiveRenderSnapshots(t *testing.T) {
 	}
 }
 
+func TestTUISongListWrapsFullNamesAndShowsOnlySelectedArtist(t *testing.T) {
+	model, cleanup := testTUIModel(t)
+	defer cleanup()
+	model.colorEnabled = false
+	model.songs = []music2bb.Song{
+		{Name: "ABCDEFGHIJKLMNOPQRSTUVWXYZ", Artist: "SelectedArtist"},
+		{Name: "ZYXWVUTSRQPONMLKJIHGFEDCBA", Artist: "HiddenArtist"},
+	}
+	model.processed = make([]bool, len(model.songs))
+	model.songCursor = 0
+
+	selected := model.renderSong(0, 24)
+	selectedCompact := strings.NewReplacer(" ", "", "\n", "").Replace(selected)
+	if !strings.Contains(selectedCompact, model.songs[0].Name) {
+		t.Fatalf("selected song name was not fully rendered:\n%s", selected)
+	}
+	if !strings.Contains(selectedCompact, "SelectedArtist") {
+		t.Fatalf("selected artist is missing:\n%s", selected)
+	}
+	for _, line := range strings.Split(selected, "\n") {
+		if width := lipgloss.Width(line); width > 24 {
+			t.Fatalf("wrapped selected line width = %d, want at most 24: %q", width, line)
+		}
+	}
+
+	unselected := model.renderSong(1, 24)
+	if compact := strings.NewReplacer(" ", "", "\n", "").Replace(unselected); !strings.Contains(compact, model.songs[1].Name) {
+		t.Fatalf("unselected song name was not fully rendered:\n%s", unselected)
+	}
+	if strings.Contains(unselected, "HiddenArtist") {
+		t.Fatalf("unselected artist was rendered:\n%s", unselected)
+	}
+}
+
 func TestTUIFixedEdgesIgnoreContentLength(t *testing.T) {
 	model, cleanup := testTUIModel(t)
 	defer cleanup()
