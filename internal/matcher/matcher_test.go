@@ -172,6 +172,92 @@ func TestMatchSortIsStableForTies(t *testing.T) {
 	}
 }
 
+func TestBalancedQueryPhases(t *testing.T) {
+	t.Parallel()
+	strategy := New(Options{})
+	phases := strategy.QueryPhases(model.Song{Name: "Song", Artist: "初音ミク"})
+	if len(phases) != 2 {
+		t.Fatalf("phases = %#v, want artist and title phases", phases)
+	}
+	if got := phases[len(phases)-1].Queries; len(got) != 1 || got[0] != "Song" {
+		t.Fatalf("title fallback = %#v", got)
+	}
+	for _, query := range phases[0].Queries {
+		if query == "Song" {
+			t.Fatalf("title-only query leaked into artist phase: %#v", phases)
+		}
+	}
+}
+
+func TestBalancedDecision(t *testing.T) {
+	t.Parallel()
+	strategy := New(Options{})
+	video := func(bvid, title, uploader string) *model.Video {
+		return &model.Video{BVID: bvid, Title: title, Uploader: uploader}
+	}
+	tests := []struct {
+		name   string
+		song   model.Song
+		ranked []model.MatchResult
+		final  bool
+		index  int
+		cont   bool
+		reason model.ReviewReason
+	}{
+		{
+			name: "artist evidence remains safe", song: model.Song{Name: "Shared", Artist: "Right Artist"},
+			ranked: []model.MatchResult{{Video: video("artist", "Shared - Right Artist", "music"), Matched: true, KeywordScore: 70, Score: 28}},
+			index:  0,
+		},
+		{
+			name: "strong title-only winner", song: model.Song{Name: "Mystery", Artist: "Unknown"},
+			ranked: []model.MatchResult{{Video: video("top", "Mystery", "someone"), Matched: true, KeywordScore: 100, Score: 40}},
+			final:  true, index: 0,
+		},
+		{
+			name: "missing runner-up is zero", song: model.Song{Name: "Mystery"},
+			ranked: []model.MatchResult{{Video: video("top", "Mystery", "someone"), Matched: true, KeywordScore: 70, Score: 35}},
+			final:  true, index: 0,
+		},
+		{
+			name: "close results are ambiguous", song: model.Song{Name: "Mystery"},
+			ranked: []model.MatchResult{
+				{Video: video("top", "Mystery", "one"), Matched: true, KeywordScore: 100, Score: 40},
+				{Video: video("runner", "Mystery", "two"), Matched: true, KeywordScore: 100, Score: 36},
+			},
+			final: true, index: -1, reason: model.ReviewAmbiguous,
+		},
+		{
+			name: "weak keyword", song: model.Song{Name: "Mystery"},
+			ranked: []model.MatchResult{{Video: video("weak", "Other", "one"), KeywordScore: 69, Score: 60}},
+			final:  true, index: -1, reason: model.ReviewWeakTitle,
+		},
+		{
+			name: "weak total", song: model.Song{Name: "Mystery"},
+			ranked: []model.MatchResult{{Video: video("weak", "Mystery", "one"), KeywordScore: 100, Score: 34.9}},
+			final:  true, index: -1, reason: model.ReviewWeakTitle,
+		},
+		{
+			name: "empty final", song: model.Song{Name: "Mystery"}, final: true,
+			index: -1, reason: model.ReviewNoCandidates,
+		},
+		{
+			name: "continue after artist phase", song: model.Song{Name: "Mystery", Artist: "Unknown"},
+			ranked: []model.MatchResult{{Video: video("candidate", "Mystery", "someone"), Matched: true, KeywordScore: 100, Score: 40}},
+			index:  -1, cont: true, reason: model.ReviewArtistUnverified,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := strategy.Decide(tt.song, tt.ranked, tt.final)
+			if got.SelectedIndex != tt.index || got.Continue != tt.cont || got.ReviewReason != tt.reason {
+				t.Fatalf("Decide() = %#v, want index=%d continue=%v reason=%q", got, tt.index, tt.cont, tt.reason)
+			}
+		})
+	}
+}
+
 func TestFuzzyContains(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

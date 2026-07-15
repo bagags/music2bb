@@ -137,7 +137,7 @@ func New(options Options) (*Components, error) {
 		Playlist: &playlistAdapter{coordinator: coordinator},
 		Match:    adapter,
 		Account:  adapter,
-		Matcher:  scorer,
+		Strategy: scorer,
 		Now:      options.Now,
 	})
 	if err != nil {

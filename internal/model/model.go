@@ -61,7 +61,20 @@ type MatchResult struct {
 	UploaderScore   float64
 	Matched         bool
 	ManualOverride  bool
+	ReviewReason    ReviewReason
 }
+
+// ReviewReason explains why a song could not be selected automatically.
+type ReviewReason string
+
+const (
+	ReviewNone             ReviewReason = ""
+	ReviewNoCandidates     ReviewReason = "no_candidates"
+	ReviewSearchFailed     ReviewReason = "search_failed"
+	ReviewWeakTitle        ReviewReason = "weak_title"
+	ReviewArtistUnverified ReviewReason = "artist_unverified"
+	ReviewAmbiguous        ReviewReason = "ambiguous"
+)
 
 // Favorite is a Bilibili favorites folder.
 type Favorite struct {

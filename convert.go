@@ -54,6 +54,7 @@ func candidateFromInternal(match model.MatchResult) MatchResult {
 		OfficialScore: match.OfficialScore, PopularityScore: match.PopularityScore,
 		UploaderScore: match.UploaderScore, Matched: match.Matched,
 		HasSelection: match.Video != nil, ManualOverride: match.ManualOverride,
+		ReviewReason: ReviewReason(match.ReviewReason),
 	}
 	if match.Video != nil {
 		video := videoFromInternal(*match.Video)
@@ -68,7 +69,7 @@ func candidateToInternal(match MatchResult) model.MatchResult {
 		KeywordScore: match.KeywordScore, QualityScore: match.QualityScore,
 		OfficialScore: match.OfficialScore, PopularityScore: match.PopularityScore,
 		UploaderScore: match.UploaderScore, Matched: match.Matched,
-		ManualOverride: match.ManualOverride,
+		ManualOverride: match.ManualOverride, ReviewReason: model.ReviewReason(match.ReviewReason),
 	}
 	if match.Video != nil {
 		video := videoToInternal(*match.Video)
@@ -93,6 +94,7 @@ func outcomesFromInternal(outcomes []service.MatchOutcome) []MatchResult {
 		converted.HasSelection = outcome.HasSelection
 		converted.ManualOverride = outcome.ManualOverride || converted.ManualOverride
 		converted.NeedsReview = outcome.NeedsReview
+		converted.ReviewReason = ReviewReason(outcome.ReviewReason)
 		converted.Candidates = candidatesFromInternal(outcome.Candidates)
 		if outcome.Failure != nil {
 			converted.Failure = &ItemFailure{Index: outcome.Failure.Index, Operation: outcome.Failure.Operation, Item: outcome.Failure.Item, Reason: outcome.Failure.Reason}
@@ -107,7 +109,8 @@ func outcomeToInternal(match MatchResult) service.MatchOutcome {
 	outcome := service.MatchOutcome{
 		Song: songToInternal(match.Song), Selected: candidate,
 		HasSelection: match.HasSelection, ManualOverride: match.ManualOverride,
-		NeedsReview: match.NeedsReview,
+		NeedsReview:  match.NeedsReview,
+		ReviewReason: model.ReviewReason(match.ReviewReason),
 	}
 	if match.Failure != nil {
 		outcome.Failure = &service.ItemFailure{Index: match.Failure.Index, Operation: match.Failure.Operation, Item: match.Failure.Item, Reason: match.Failure.Reason}

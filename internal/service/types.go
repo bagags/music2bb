@@ -62,6 +62,18 @@ type MatchOutcome struct {
 	Failure        *ItemFailure
 	ManualOverride bool
 	NeedsReview    bool
+	ReviewReason   model.ReviewReason
+}
+
+type QueryPhase struct {
+	Queries []string
+}
+
+type MatchDecision struct {
+	// SelectedIndex is -1 when no candidate is selected.
+	SelectedIndex int
+	Continue      bool
+	ReviewReason  model.ReviewReason
 }
 
 type CreateFavoriteRequest struct {
@@ -102,6 +114,8 @@ type AccountClient interface {
 	AddToFavorite(ctx context.Context, favoriteID int64, videos []model.Video) (AddResult, error)
 }
 
-type VideoMatcher interface {
-	Match(song model.Song, videos []model.Video, topK int) []model.MatchResult
+type MatchStrategy interface {
+	QueryPhases(model.Song) []QueryPhase
+	Rank(model.Song, []model.Video, int) []model.MatchResult
+	Decide(model.Song, []model.MatchResult, bool) MatchDecision
 }

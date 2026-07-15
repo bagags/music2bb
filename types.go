@@ -50,9 +50,22 @@ type MatchResult struct {
 	HasSelection    bool
 	ManualOverride  bool
 	NeedsReview     bool
+	ReviewReason    ReviewReason
 	Candidates      []MatchResult
 	Failure         *ItemFailure
 }
+
+// ReviewReason explains why a song could not be selected automatically.
+type ReviewReason string
+
+const (
+	ReviewNone             ReviewReason = ""
+	ReviewNoCandidates     ReviewReason = "no_candidates"
+	ReviewSearchFailed     ReviewReason = "search_failed"
+	ReviewWeakTitle        ReviewReason = "weak_title"
+	ReviewArtistUnverified ReviewReason = "artist_unverified"
+	ReviewAmbiguous        ReviewReason = "ambiguous"
+)
 
 type Favorite struct {
 	ID         int64

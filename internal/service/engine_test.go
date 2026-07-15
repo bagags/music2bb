@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -74,6 +75,14 @@ func (f *fakeRemote) AddToFavorite(context.Context, int64, []model.Video) (AddRe
 
 type fakeMatcher struct{}
 
+func (fakeMatcher) QueryPhases(song model.Song) []QueryPhase {
+	phases := []QueryPhase{{Queries: song.AllSearchKeywords()}}
+	if song.SearchKeyword() != song.SearchKeywordFull() {
+		phases = append(phases, QueryPhase{Queries: []string{song.SearchKeyword()}})
+	}
+	return phases
+}
+
 func (fakeMatcher) Match(song model.Song, videos []model.Video, topK int) []model.MatchResult {
 	results := make([]model.MatchResult, 0, len(videos))
 	for index := range videos {
@@ -86,16 +95,84 @@ func (fakeMatcher) Match(song model.Song, videos []model.Video, topK int) []mode
 	return results
 }
 
+func (m fakeMatcher) Rank(song model.Song, videos []model.Video, topK int) []model.MatchResult {
+	return m.Match(song, videos, topK)
+}
+
+func (fakeMatcher) Decide(song model.Song, ranked []model.MatchResult, final bool) MatchDecision {
+	for index, candidate := range ranked {
+		if candidate.Video != nil && strings.Contains(strings.ToLower(candidate.Video.Title+" "+candidate.Video.Uploader), strings.ToLower(song.CleanArtist())) && song.CleanArtist() != "" {
+			return MatchDecision{SelectedIndex: index}
+		}
+	}
+	if !final {
+		return MatchDecision{SelectedIndex: -1, Continue: true, ReviewReason: model.ReviewArtistUnverified}
+	}
+	reason := model.ReviewWeakTitle
+	if len(ranked) == 0 {
+		reason = model.ReviewNoCandidates
+	}
+	return MatchDecision{SelectedIndex: -1, ReviewReason: reason}
+}
+
 type scriptedSearch struct {
 	mu      sync.Mutex
 	queries []string
 	results map[string][]model.Video
+	errs    map[string]error
+}
+
+type ambiguityStrategy struct{}
+
+func (ambiguityStrategy) QueryPhases(model.Song) []QueryPhase {
+	return []QueryPhase{{Queries: []string{"title"}}}
+}
+
+func (ambiguityStrategy) Rank(song model.Song, videos []model.Video, limit int) []model.MatchResult {
+	ranked := make([]model.MatchResult, 0, len(videos))
+	for index := range videos {
+		video := videos[index]
+		ranked = append(ranked, model.MatchResult{Song: song, Video: &video, Matched: true, KeywordScore: 100, Score: 40 - float64(index*4)})
+	}
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	return ranked
+}
+
+func (ambiguityStrategy) Decide(_ model.Song, ranked []model.MatchResult, _ bool) MatchDecision {
+	if len(ranked) > 1 && ranked[0].Score-ranked[1].Score < 5 {
+		return MatchDecision{SelectedIndex: -1, ReviewReason: model.ReviewAmbiguous}
+	}
+	return MatchDecision{SelectedIndex: 0}
+}
+
+type burstSearch struct {
+	total   int32
+	ready   atomic.Int32
+	release chan struct{}
+	once    sync.Once
+}
+
+func (s *burstSearch) SearchVideos(context.Context, string, int, int) ([]model.Video, error) {
+	if s.ready.Add(1) == s.total {
+		s.once.Do(func() { close(s.release) })
+	}
+	<-s.release
+	return []model.Video{{BVID: "candidate", Title: "title"}}, nil
+}
+
+func (*burstSearch) VideoDetail(context.Context, string) (model.Video, error) {
+	return model.Video{}, nil
 }
 
 func (s *scriptedSearch) SearchVideos(_ context.Context, keyword string, _, _ int) ([]model.Video, error) {
 	s.mu.Lock()
 	s.queries = append(s.queries, keyword)
 	s.mu.Unlock()
+	if err := s.errs[keyword]; err != nil {
+		return nil, err
+	}
 	return append([]model.Video(nil), s.results[keyword]...), nil
 }
 
@@ -109,7 +186,7 @@ func newTestEngine(t *testing.T, remote *fakeRemote) *Engine {
 		Playlist: fakePlaylist{songs: []model.Song{{Name: "one"}}},
 		Match:    remote,
 		Account:  remote,
-		Matcher:  fakeMatcher{},
+		Strategy: fakeMatcher{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -141,13 +218,37 @@ func TestMatchBoundsWorkersAndPreservesOrder(t *testing.T) {
 	}
 }
 
-func TestMatchUsesArtistQueryThenQueuesTitleFallbackForReview(t *testing.T) {
+func TestMatchTopKDoesNotHideAmbiguityFromDecision(t *testing.T) {
+	search := &scriptedSearch{results: map[string][]model.Video{
+		"title": {
+			{BVID: "top", Title: "title", Uploader: "one"},
+			{BVID: "runner-up", Title: "title", Uploader: "two"},
+		},
+	}}
+	account := &fakeRemote{}
+	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Strategy: ambiguityStrategy{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err := engine.Match(context.Background(), []model.Song{{Name: "title"}}, MatchOptions{Workers: 1, SearchPages: 1, TopK: 1}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if outcomes[0].HasSelection || !outcomes[0].NeedsReview || outcomes[0].ReviewReason != model.ReviewAmbiguous {
+		t.Fatalf("top-k weakened ambiguity decision: %#v", outcomes[0])
+	}
+	if len(outcomes[0].Candidates) != 1 {
+		t.Fatalf("retained candidates = %d, want top-k 1", len(outcomes[0].Candidates))
+	}
+}
+
+func TestMatchUsesArtistQueryThenSelectsSafeTitleFallback(t *testing.T) {
 	search := &scriptedSearch{results: map[string][]model.Video{
 		"Shared Song Right Artist": {{BVID: "wrong", Title: "Shared Song", Uploader: "Other Artist"}},
 		"Shared Song":              {{BVID: "right", Title: "Shared Song", Uploader: "Right Artist"}},
 	}}
 	account := &fakeRemote{}
-	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Matcher: fakeMatcher{}})
+	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Strategy: fakeMatcher{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -155,8 +256,8 @@ func TestMatchUsesArtistQueryThenQueuesTitleFallbackForReview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(outcomes) != 1 || outcomes[0].HasSelection || !outcomes[0].NeedsReview {
-		t.Fatalf("unsafe fallback outcome = %#v", outcomes)
+	if len(outcomes) != 1 || !outcomes[0].HasSelection || outcomes[0].NeedsReview {
+		t.Fatalf("safe fallback outcome = %#v", outcomes)
 	}
 	search.mu.Lock()
 	defer search.mu.Unlock()
@@ -171,13 +272,18 @@ func TestMatchAutoSelectsOnlyWithArtistEvidence(t *testing.T) {
 		"Shared Song Right Artist": {{BVID: "right", Title: "Shared Song - Right Artist", Uploader: "music"}},
 	}}
 	account := &fakeRemote{}
-	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Matcher: fakeMatcher{}})
+	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Strategy: fakeMatcher{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	outcomes, err := engine.Match(context.Background(), []model.Song{{Name: "Shared Song", Artist: "Right Artist"}}, MatchOptions{Workers: 1, SearchPages: 1}, nil)
 	if err != nil || len(outcomes) != 1 || !outcomes[0].HasSelection || outcomes[0].NeedsReview {
 		t.Fatalf("safe outcome = %#v, %v", outcomes, err)
+	}
+	search.mu.Lock()
+	defer search.mu.Unlock()
+	if got := fmt.Sprint(search.queries); got != "[Shared Song Right Artist]" {
+		t.Fatalf("safe artist phase did not short-circuit: %s", got)
 	}
 }
 
@@ -186,21 +292,98 @@ func TestMatchWithoutArtistAlwaysNeedsReview(t *testing.T) {
 		"Mystery": {{BVID: "candidate", Title: "Mystery", Uploader: "unknown"}},
 	}}
 	account := &fakeRemote{}
-	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Matcher: fakeMatcher{}})
+	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Strategy: fakeMatcher{}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var warned bool
+	var songEvents int
 	outcomes, err := engine.Match(context.Background(), []model.Song{{Name: "Mystery"}}, MatchOptions{Workers: 1, SearchPages: 1}, ObserverFunc(func(event ProgressEvent) {
-		if event.Kind == EventWarning {
-			warned = true
+		if event.Kind == EventSong {
+			songEvents++
 		}
 	}))
 	if err != nil || len(outcomes) != 1 || outcomes[0].HasSelection || !outcomes[0].NeedsReview {
 		t.Fatalf("artistless outcome = %#v, %v", outcomes, err)
 	}
-	if !warned {
-		t.Fatal("artistless outcome did not emit a warning")
+	if songEvents != 1 {
+		t.Fatalf("song events = %d, want one ordered status event", songEvents)
+	}
+}
+
+func TestMatchDeduplicatesAggregateAcrossPhases(t *testing.T) {
+	search := &scriptedSearch{results: map[string][]model.Video{
+		"Shared Song Right Artist": {
+			{BVID: "duplicate", Title: "Shared Song", Uploader: "Other"},
+		},
+		"Shared Song": {
+			{BVID: "duplicate", Title: "Shared Song duplicate", Uploader: "Other"},
+			{BVID: "unique", Title: "Shared Song", Uploader: "Another"},
+		},
+	}}
+	account := &fakeRemote{}
+	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Strategy: fakeMatcher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err := engine.Match(context.Background(), []model.Song{{Name: "Shared Song", Artist: "Right Artist"}}, MatchOptions{Workers: 1, SearchPages: 1, TopK: 10}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes[0].Candidates) != 2 {
+		t.Fatalf("deduplicated candidates = %#v", outcomes[0].Candidates)
+	}
+	if outcomes[0].Candidates[0].Video.Title != "Shared Song" {
+		t.Fatalf("first-seen duplicate was not preserved: %#v", outcomes[0].Candidates[0].Video)
+	}
+}
+
+func TestMatchReviewReasonsForEmptyAndFailedSearches(t *testing.T) {
+	tests := []struct {
+		name       string
+		search     *scriptedSearch
+		wantReason model.ReviewReason
+		wantError  bool
+	}{
+		{
+			name: "empty", search: &scriptedSearch{results: map[string][]model.Video{}},
+			wantReason: model.ReviewNoCandidates,
+		},
+		{
+			name: "failed", search: &scriptedSearch{results: map[string][]model.Video{}, errs: map[string]error{"Song Artist": errors.New("offline"), "Song": errors.New("offline")}},
+			wantReason: model.ReviewSearchFailed, wantError: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			account := &fakeRemote{}
+			engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: tt.search, Account: account, Strategy: fakeMatcher{}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			outcomes, matchErr := engine.Match(context.Background(), []model.Song{{Name: "Song", Artist: "Artist"}}, MatchOptions{Workers: 1, SearchPages: 1}, nil)
+			if (matchErr != nil) != tt.wantError {
+				t.Fatalf("error = %v, wantError=%v", matchErr, tt.wantError)
+			}
+			if len(outcomes) != 1 || !outcomes[0].NeedsReview || outcomes[0].ReviewReason != tt.wantReason {
+				t.Fatalf("outcome = %#v", outcomes)
+			}
+		})
+	}
+}
+
+func TestMatchContinuesAfterPartialSearchFailure(t *testing.T) {
+	search := &scriptedSearch{
+		results: map[string][]model.Video{"Shared Song": {{BVID: "safe", Title: "Shared Song - Right Artist"}}},
+		errs:    map[string]error{"Shared Song Right Artist": errors.New("temporary")},
+	}
+	account := &fakeRemote{}
+	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Strategy: fakeMatcher{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err := engine.Match(context.Background(), []model.Song{{Name: "Shared Song", Artist: "Right Artist"}}, MatchOptions{Workers: 1, SearchPages: 1}, nil)
+	if err != nil || !outcomes[0].HasSelection || outcomes[0].Failure != nil {
+		t.Fatalf("partial failure outcome = %#v, %v", outcomes, err)
 	}
 }
 
@@ -208,7 +391,7 @@ func TestParsePlaylistWarnsAndContinuesWhenIncomplete(t *testing.T) {
 	remote := &fakeRemote{}
 	engine, err := New(Dependencies{
 		Playlist: fakePlaylist{songs: []model.Song{{Name: "one", Artist: "artist"}}, expected: 109},
-		Match:    remote, Account: remote, Matcher: fakeMatcher{},
+		Match:    remote, Account: remote, Strategy: fakeMatcher{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -239,7 +422,7 @@ func TestParsePlaylistNotifiesWhenHTTPFallsBackToChromium(t *testing.T) {
 	remote := &fakeRemote{}
 	engine, err := New(Dependencies{
 		Playlist: fakePlaylist{songs: []model.Song{{Name: "one"}}, browserFallback: true},
-		Match:    remote, Account: remote, Matcher: fakeMatcher{},
+		Match:    remote, Account: remote, Strategy: fakeMatcher{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -288,6 +471,34 @@ func TestMatchSerializesObserver(t *testing.T) {
 	}
 	if len(events) != len(songs) {
 		t.Fatalf("events = %d, want %d", len(events), len(songs))
+	}
+}
+
+func TestMatchProgressCompletionIsMonotonic(t *testing.T) {
+	const songCount = 256
+	search := &burstSearch{total: songCount, release: make(chan struct{})}
+	account := &fakeRemote{}
+	engine, err := New(Dependencies{Playlist: fakePlaylist{}, Match: search, Account: account, Strategy: ambiguityStrategy{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	songs := make([]model.Song, songCount)
+	for index := range songs {
+		songs[index] = model.Song{Name: fmt.Sprintf("song-%d", index)}
+	}
+	currents := make([]int, 0, songCount)
+	_, err = engine.Match(context.Background(), songs, MatchOptions{Workers: songCount, SearchPages: 1, TopK: 1}, ObserverFunc(func(event ProgressEvent) {
+		if event.Kind == EventSong && event.Operation == "match" {
+			currents = append(currents, event.Current)
+		}
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, current := range currents {
+		if want := index + 1; current != want {
+			t.Fatalf("progress event %d reported %d, want %d; sequence=%v", index, current, want, currents)
+		}
 	}
 }
 

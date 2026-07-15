@@ -10,7 +10,8 @@
 - Bilibili 扫码登录、Cookie 持久化、WBI 签名和收藏夹管理
 - 关键词、音质、官方来源、热度和 UP 主权重综合评分
 - 默认 4 个受限并发 worker，保持输入与结果顺序
-- 自动匹配、候选审核、完全手动匹配和 BV 号覆盖
+- 终端中自动启动覆盖登录、解析、匹配、审核、收藏夹、确认、写入和回执的全屏工作区
+- 平衡式分阶段匹配、可解释审核原因、完全手动匹配和候选覆盖
 - 可取消操作、稳定退出码、结构化部分失败结果
 - 模块根包 `music2bb` 提供无终端依赖、可注入、适合未来 Go GUI 的公共 API
 
@@ -63,6 +64,10 @@ music2bb convert 'https://m.kugou.com/share/zlist.html?specialid=3339907' \
 music2bb convert '<playlist-url>' --top-k 5 --manual-review
 ```
 
+当标准输入和标准输出都是终端且 `TERM` 不是 `dumb` 时，`convert` 默认进入全屏工作区。左侧始终按歌单顺序显示所有歌曲及文本状态，右侧显示来源元数据、审核原因、候选分数组成、UP 主、时长、BVID 和链接。小于 `80×20` 时改为单窗格，Tab 在前往下一首待审歌曲时同时切换窗格；小于 `40×12` 时保留退出与调整尺寸处理并显示尺寸提示。
+
+审核快捷键：`←/→` 或 `h/l` 切换歌曲，`↑/↓` 或 `k/j` 切换候选，Enter 接受，Tab 前往下一首待审歌曲，`s` 手动搜索，`x` 跳过，`u` 清除选择，`c` 在所有待审歌曲已选择或跳过后继续，`?` 显示完整帮助，`q` 或 Ctrl-C 取消。写入期间取消会停止剩余操作并在退出全屏后保留一份包含已成功、失败和跳过数量的回执。
+
 常用选项：
 
 | 选项 | 默认值 | 说明 |
@@ -75,12 +80,19 @@ music2bb convert '<playlist-url>' --top-k 5 --manual-review
 | `--browser` | `auto` | `auto`、`never` 或 `always` |
 | `--manual-review` | `false` | 审核自动匹配候选 |
 | `--manual` | `false` | 完全手动选择 |
+| `--no-tui` | `false` | 强制使用无 ANSI、按歌单顺序输出的引导式文本界面 |
 | `--no-qr-login` | `false` | 禁止自动发起扫码登录 |
 | `--config-dir` | 系统目录 | 指定便携配置目录 |
 | `--verbose`, `-v` | `false` | 输出详细进度 |
 
-非交互式写入需要同时指定 `--favorite` 和 `--yes`。
+管道、CI、屏幕阅读器环境、`TERM=dumb` 或显式 `--no-tui` 会使用相同转换控制器下的文本界面。非交互式写入需要同时指定 `--favorite` 和 `--yes`；如果仍有无法自动解决的歌曲，则必须改在交互终端中逐首选择或跳过。
 新建 Bilibili 收藏夹默认仅自己可见；如需公开收藏夹，请在 `favorites create` 命令中指定 `--public`。
+
+## 平衡式匹配与审核原因
+
+匹配先执行包含歌手和已知别名的查询；只有尚未安全决定时才执行纯标题回退。各阶段结果按 BVID 去重后重新聚合排名。带有可靠歌手证据的候选继续按既有规则自动选择；没有歌手证据时，只有第一名标题分至少为 70、总分至少为 35，且比第二名领先至少 5 分（没有第二名时按 0 分）才会自动选择。
+
+所有未自动解决的歌曲都必须选择或跳过。公共 `MatchResult.ReviewReason` 会给出 `no_candidates`、`search_failed`、`weak_title`、`artist_unverified` 或 `ambiguous`，全屏和文本界面都会显示对应说明。`--manual` 禁止自动选择；`--manual-review` 保留推荐但要求每首歌显式确认。
 
 ## 歌单解析与 Chromium 回退
 
@@ -137,7 +149,7 @@ defer engine.Close()
 songs, err := engine.ParsePlaylist(ctx, playlistURL, observer)
 ```
 
-模块根包 `music2bb` 暴露上下文感知的登录、解析、匹配、搜索、收藏夹和浏览器操作，以及序列化观察者、类型化错误和测试依赖注入。非公开站点协议保留在 `internal` 包中。项目的包职责和依赖方向见 [`docs/architecture.md`](docs/architecture.md)。
+模块根包 `music2bb` 暴露上下文感知的登录、解析、匹配、搜索、收藏夹和浏览器操作，以及序列化观察者、类型化错误、审核原因和测试依赖注入。非公开站点协议保留在 `internal` 包中。项目的包职责和依赖方向见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 测试
 

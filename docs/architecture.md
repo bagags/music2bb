@@ -44,12 +44,12 @@ consumers outside this module.
 |---|---|
 | `music2bb` | Stable public engine, caller-owned result types, typed errors, observers, and dependency-injection options |
 | `cmd/music2bb` | Process startup, signal handling, terminal detection, and build-version reporting |
-| `internal/cli` | Command parsing, prompts, review flows, rendering, and exit-code mapping |
+| `internal/cli` | Shared conversion session, Bubble Tea workspace, plain prompts, review flows, rendering, and exit-code mapping |
 | `internal/service` | Use-case orchestration through small client and matcher interfaces |
 | `internal/wiring` | Production construction and adapters between service interfaces and concrete clients |
 | `internal/playlist` | Provider identification, typed optimizations, candidate decoding, merging, and browser-fallback coordination |
 | `internal/model` | I/O-free domain records and song/search normalization |
-| `internal/matcher` | Candidate filtering, scoring, ranking, and selection thresholds |
+| `internal/matcher` | Balanced query phases, candidate filtering, scoring, ranking, review reasons, and selection thresholds |
 | `internal/kugou` | Browser-free Kugou protocol optimization, response parsing, and song cleanup |
 | `internal/applemusic` | Browser-free Apple Music share-page identification and `serialized-server-data` playlist extraction |
 | `internal/bilibili` | Authentication, search, WBI signing, cookies, and favorite operations |
@@ -64,6 +64,20 @@ The root package returns public snapshots rather than exposing internal models
 or site-client response types. Conversion at the public boundary is deliberate:
 it lets internal representations evolve without silently changing the reusable
 API. Slices and nested values returned by the engine are caller-owned.
+
+Matching depends on a strategy seam rather than a ranking-only interface. A
+strategy supplies ordered query phases, ranks the deduplicated aggregate, and
+decides whether the service should stop or continue. The balanced strategy runs
+artist and alias queries before a title-only fallback, preserves automatic
+selection backed by artist evidence, and accepts an artist-unverified winner
+only when its title score, total score, and runner-up margin all meet the
+documented thresholds. Every unresolved outcome carries a public review reason.
+
+The CLI's full-screen and plain frontends share one conversion session for
+login, Chromium installation/retry, parsing, matching, manual search, favorite
+operations, and writes. Bubble Tea consumes serialized observer and result
+messages through a channel. Its operation context is cancelled when the UI
+closes, and the controller waits for active backend work before returning.
 
 `internal/service` defines interfaces at the point where they are consumed and
 continues to receive decoded `model.Song` values. `internal/playlist` sits behind

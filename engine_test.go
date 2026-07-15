@@ -14,6 +14,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/bagags/music2bb-go/internal/model"
+	"github.com/bagags/music2bb-go/internal/service"
 )
 
 type memoryStorage struct {
@@ -524,6 +527,19 @@ func TestErrorUnwrap(t *testing.T) {
 	err := &Error{Category: ErrorNetwork, Operation: "test", Err: cause}
 	if !errors.Is(err, cause) {
 		t.Fatal("typed error does not unwrap")
+	}
+}
+
+func TestReviewReasonCrossesPublicBoundary(t *testing.T) {
+	t.Parallel()
+	outcomes := outcomesFromInternal([]service.MatchOutcome{{
+		Song: model.Song{Name: "shared"}, NeedsReview: true, ReviewReason: model.ReviewAmbiguous,
+	}})
+	if len(outcomes) != 1 || !outcomes[0].NeedsReview || outcomes[0].ReviewReason != ReviewAmbiguous {
+		t.Fatalf("public outcome = %#v", outcomes)
+	}
+	if string(ReviewSearchFailed) != "search_failed" || string(ReviewArtistUnverified) != "artist_unverified" {
+		t.Fatal("public review-reason wire values changed")
 	}
 }
 

@@ -24,10 +24,16 @@ type convertOptions struct {
 	manual       bool
 	manualReview bool
 	qrLogin      bool
+	noTUI        bool
 }
 
 func (a *App) runConvert(ctx context.Context, args []string) int {
 	set := newFlagSet("convert", a.IO.Err)
+	set.Usage = func() {
+		fmt.Fprintln(a.IO.Err, "用法: music2bb convert <playlist-url> [options]")
+		fmt.Fprintln(a.IO.Err, "交互终端默认启动全屏审核工作区；使用 --no-tui 强制文本界面。")
+		set.PrintDefaults()
+	}
 	options := convertOptions{searchPages: 3, topK: 3, workers: 4, browser: string(music2bb.BrowserAuto), qrLogin: true}
 	set.IntVar(&options.searchPages, "search-pages", options.searchPages, "每首歌曲搜索页数")
 	set.IntVar(&options.topK, "top-k", options.topK, "保留候选数量")
@@ -41,6 +47,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	set.BoolVar(&options.manualReview, "manual-review", false, "手动审核自动匹配")
 	set.BoolVar(&options.manual, "manual", false, "完全手动匹配")
 	set.BoolVar(&options.qrLogin, "qr-login", true, "允许扫码登录")
+	set.BoolVar(&options.noTUI, "no-tui", false, "使用引导式文本界面")
 	noQR := false
 	set.BoolVar(&noQR, "no-qr-login", false, "禁止扫码登录")
 	valueFlags := map[string]bool{"--search-pages": true, "--top-k": true, "--workers": true, "--favorite": true, "--browser": true, "--config-dir": true}
@@ -66,16 +73,29 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 		fmt.Fprintln(a.IO.Err, "后端未配置")
 		return ExitInternal
 	}
-
-	baseObserver := a.observer(options.verbose)
-	incompleteHTTPResult := false
-	observer := music2bb.ObserverFunc(func(event music2bb.ProgressEvent) {
-		if event.Kind == music2bb.EventWarning && event.Operation == "parse_playlist" && event.Total > 0 && event.Current < event.Total {
-			incompleteHTTPResult = true
+	rawURL := set.Arg(0)
+	session := newConversionSession(a.Backend, a.Browser, rawURL, options, policy)
+	if shouldUseTUI(a.IO, options.noTUI) {
+		code, initialized := a.runTUI(ctx, session)
+		if initialized {
+			return code
 		}
-		baseObserver.Observe(event)
+		fmt.Fprintln(a.IO.Err, "全屏界面初始化失败，已切换到文本界面。")
+	}
+	return a.runPlainConvert(ctx, session)
+}
+
+func (a *App) runPlainConvert(ctx context.Context, session *conversionSession) int {
+	options := session.options
+	baseObserver := a.observer(options.verbose)
+	observer := music2bb.ObserverFunc(func(event music2bb.ProgressEvent) {
+		// Match workers finish out of playlist order. The plain renderer prints
+		// one ordered summary after matching instead of interleaving statuses.
+		if event.Kind != music2bb.EventSong || event.Operation != "match" {
+			baseObserver.Observe(event)
+		}
 	})
-	account, err := a.Backend.LoginWithOptions(ctx, music2bb.LoginOptions{UseStoredCookies: true, AllowQR: options.qrLogin}, observer)
+	account, err := session.login(ctx, observer)
 	if err != nil {
 		fmt.Fprintf(a.IO.Err, "登录失败: %v\n", err)
 		return exitFor(err)
@@ -84,27 +104,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 		fmt.Fprintf(a.IO.Err, "已登录: %s\n", account.Name)
 	}
 
-	songs, err := a.Backend.ParsePlaylistWithOptions(ctx, set.Arg(0), music2bb.ParseOptions{BrowserPolicy: policy}, observer)
-	if (err != nil || incompleteHTTPResult) && policy != music2bb.BrowserNever && a.Browser != nil {
-		status, statusErr := a.Browser.Status(ctx)
-		if statusErr == nil && !status.Installed {
-			if status.Bundled {
-				fmt.Fprintln(a.IO.Err, "Chromium 尚未就绪，正在自动安装程序内置版本后重试。")
-			} else {
-				fmt.Fprintf(a.IO.Err, "Chromium 尚未就绪，正在自动下载并安装校验版（%s）后重试。\n", browserDownloadSize(status))
-			}
-			if _, installErr := a.Browser.Install(ctx, true); installErr == nil {
-				retrySongs, retryErr := a.Backend.ParsePlaylistWithOptions(ctx, set.Arg(0), music2bb.ParseOptions{BrowserPolicy: music2bb.BrowserAlways}, observer)
-				if err != nil || retryErr == nil {
-					songs, err = retrySongs, retryErr
-				} else {
-					fmt.Fprintf(a.IO.Err, "Chromium 回退失败，将继续使用 HTTP 部分结果: %v\n", retryErr)
-				}
-			} else {
-				fmt.Fprintf(a.IO.Err, "浏览器安装失败: %v\n", installErr)
-			}
-		}
-	}
+	songs, err := session.parse(ctx, observer)
 	if err != nil && a.IO.Interactive {
 		fmt.Fprintf(a.IO.Err, "自动解析失败: %v\n", err)
 		songs = a.readManualSongs()
@@ -122,9 +122,9 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 
 	var outcomes []music2bb.MatchResult
 	if options.manual {
-		outcomes = a.manualMatchAll(ctx, songs)
+		outcomes = a.manualMatchAll(ctx, session, songs)
 	} else {
-		outcomes, err = a.Backend.Match(ctx, songs, music2bb.MatchOptions{SearchPages: options.searchPages, TopK: options.topK, Workers: options.workers}, observer)
+		outcomes, err = session.match(ctx, songs, observer)
 		if err != nil {
 			fmt.Fprintf(a.IO.Err, "部分匹配请求失败: %v\n", err)
 			if exitFor(err) == ExitCancelled {
@@ -134,15 +134,15 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 		needsReview := hasRequiredReviews(outcomes)
 		if options.manualReview || needsReview {
 			if !a.IO.Interactive {
-				if options.manualReview {
-					fmt.Fprintln(a.IO.Err, "--manual-review 需要交互式终端")
-					return ExitInvalidInput
-				}
+				a.printOrderedMatchSummary(outcomes)
+				fmt.Fprintln(a.IO.Err, "存在需要处理的歌曲；请在交互终端运行，或调整输入使所有歌曲可自动选择")
+				return ExitInvalidInput
 			} else {
-				outcomes = a.reviewMatches(ctx, outcomes, options.manualReview)
+				outcomes = a.reviewMatches(ctx, session, outcomes, options.manualReview)
 			}
 		}
 	}
+	a.printOrderedMatchSummary(outcomes)
 
 	matched := 0
 	for _, outcome := range outcomes {
@@ -156,7 +156,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	}
 	fmt.Fprintf(a.IO.Out, "匹配成功: %d/%d\n", matched, len(outcomes))
 
-	favorite, err := a.selectFavorite(ctx, options.favorite)
+	favorite, err := a.selectFavorite(ctx, session, options.favorite)
 	if err != nil {
 		if errors.Is(err, errFavoriteSelectionCancelled) {
 			fmt.Fprintln(a.IO.Out, "已取消")
@@ -176,7 +176,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 			return ExitSuccess
 		}
 	}
-	result, err := a.Backend.AddToFavorite(ctx, favorite.ID, outcomes, observer)
+	result, err := session.write(ctx, favorite.ID, outcomes, observer)
 	fmt.Fprintf(a.IO.Out, "成功: %d | 失败: %d\n", len(result.Succeeded), len(result.Failed))
 	for _, failure := range result.Failed {
 		fmt.Fprintf(a.IO.Err, "✗ %s: %s\n", failure.BVID, failure.Reason)
@@ -211,15 +211,15 @@ func (a *App) readManualSongs() []music2bb.Song {
 	return songs
 }
 
-func (a *App) manualMatchAll(ctx context.Context, songs []music2bb.Song) []music2bb.MatchResult {
+func (a *App) manualMatchAll(ctx context.Context, session *conversionSession, songs []music2bb.Song) []music2bb.MatchResult {
 	outcomes := make([]music2bb.MatchResult, len(songs))
 	for index, song := range songs {
-		outcomes[index] = a.manualMatch(ctx, song)
+		outcomes[index] = a.manualMatch(ctx, session, song)
 	}
 	return outcomes
 }
 
-func (a *App) manualMatch(ctx context.Context, song music2bb.Song) music2bb.MatchResult {
+func (a *App) manualMatch(ctx context.Context, session *conversionSession, song music2bb.Song) music2bb.MatchResult {
 	outcome := music2bb.MatchResult{Song: song}
 	if !a.IO.Interactive {
 		return outcome
@@ -228,7 +228,7 @@ func (a *App) manualMatch(ctx context.Context, song music2bb.Song) music2bb.Matc
 	if query == "" {
 		query = song.SearchKeywordFull()
 	}
-	candidates, err := a.Backend.SearchCandidates(ctx, song, query, 10)
+	candidates, err := session.search(ctx, song, query)
 	if err != nil {
 		fmt.Fprintf(a.IO.Err, "搜索失败: %v\n", err)
 		return outcome
@@ -238,9 +238,9 @@ func (a *App) manualMatch(ctx context.Context, song music2bb.Song) music2bb.Matc
 			fmt.Fprintf(a.IO.Out, "%d. %s - %s (%.1f)\n", index+1, candidate.Video.Title, candidate.Video.Uploader, candidate.Score)
 		}
 	}
-	choice, _ := a.ask("选择序号、输入 BV 号，或 0 跳过: ")
+	choice, _ := a.ask("选择候选序号、输入 BV 号，或 x 跳过: ")
 	if strings.HasPrefix(choice, "BV") {
-		video, detailErr := a.Backend.VideoDetail(ctx, choice)
+		video, detailErr := session.videoDetail(ctx, choice)
 		if detailErr == nil {
 			outcome.Video = &video
 			outcome.Score = 999
@@ -262,42 +262,80 @@ func (a *App) manualMatch(ctx context.Context, song music2bb.Song) music2bb.Matc
 	return outcome
 }
 
-func (a *App) reviewMatches(ctx context.Context, outcomes []music2bb.MatchResult, reviewAll bool) []music2bb.MatchResult {
+func (a *App) reviewMatches(ctx context.Context, session *conversionSession, outcomes []music2bb.MatchResult, reviewAll bool) []music2bb.MatchResult {
 	for index := range outcomes {
 		if !reviewAll && !outcomes[index].NeedsReview {
 			continue
 		}
-		for candidateIndex, candidate := range outcomes[index].Candidates {
-			if candidate.Video != nil {
-				fmt.Fprintf(a.IO.Out, "  %d. %s - %s (%.1f)\n", candidateIndex+1, candidate.Video.Title, candidate.Video.Uploader, candidate.Score)
+		for {
+			fmt.Fprintf(a.IO.Out, "[%d/%d] %s - %s（%s）\n", index+1, len(outcomes), outcomes[index].Song.Name, outcomes[index].Song.Artist, reviewReasonText(outcomes[index].ReviewReason))
+			for candidateIndex, candidate := range outcomes[index].Candidates {
+				if candidate.Video != nil {
+					fmt.Fprintf(a.IO.Out, "  %d. %s - %s | 总分 %.1f 标题 %.1f\n", candidateIndex+1, candidate.Video.Title, candidate.Video.Uploader, candidate.Score, candidate.KeywordScore)
+				}
 			}
-		}
-		prompt := fmt.Sprintf("[%d/%d] %s，输入候选序号，或手动搜索? [y/N] ", index+1, len(outcomes), outcomes[index].Song.Name)
-		if !outcomes[index].HasSelection {
-			prompt = fmt.Sprintf("[%d/%d] %s 未匹配，输入候选序号，或手动搜索? [Y/n] ", index+1, len(outcomes), outcomes[index].Song.Name)
-		}
-		answer, _ := a.ask(prompt)
-		if selected, err := strconv.Atoi(answer); err == nil && selected > 0 && selected <= len(outcomes[index].Candidates) {
-			candidate := outcomes[index].Candidates[selected-1]
-			candidate.Song = outcomes[index].Song
-			candidate.HasSelection = candidate.Video != nil
-			candidate.Matched = candidate.HasSelection
-			candidate.ManualOverride = candidate.HasSelection
-			candidate.NeedsReview = false
-			candidate.Candidates = outcomes[index].Candidates
-			outcomes[index] = candidate
-			continue
-		}
-		accept := strings.EqualFold(answer, "y") || (!outcomes[index].HasSelection && answer == "")
-		if accept {
-			manual := a.manualMatch(ctx, outcomes[index].Song)
-			if manual.HasSelection {
-				manual.NeedsReview = false
-				outcomes[index] = manual
+			prompt := "输入候选序号、s 手动搜索、x 跳过"
+			if outcomes[index].HasSelection {
+				prompt += "，或 Enter 保留推荐"
+			}
+			answer, _ := a.ask(prompt + ": ")
+			if selected, err := strconv.Atoi(answer); err == nil && selected > 0 && selected <= len(outcomes[index].Candidates) {
+				candidate := outcomes[index].Candidates[selected-1]
+				candidate.Song = outcomes[index].Song
+				candidate.HasSelection = candidate.Video != nil
+				candidate.Matched = candidate.HasSelection
+				candidate.ManualOverride = candidate.HasSelection
+				candidate.NeedsReview = !candidate.HasSelection
+				candidate.ReviewReason = music2bb.ReviewNone
+				candidate.Candidates = outcomes[index].Candidates
+				outcomes[index] = candidate
+				if candidate.HasSelection {
+					break
+				}
+			}
+			switch strings.ToLower(answer) {
+			case "":
+				if outcomes[index].HasSelection {
+					outcomes[index].NeedsReview = false
+					outcomes[index].ReviewReason = music2bb.ReviewNone
+					break
+				}
+			case "s":
+				manual := a.manualMatch(ctx, session, outcomes[index].Song)
+				if manual.HasSelection {
+					manual.NeedsReview = false
+					manual.ReviewReason = music2bb.ReviewNone
+					outcomes[index] = manual
+					break
+				}
+			case "x":
+				outcomes[index].Video = nil
+				outcomes[index].HasSelection = false
+				outcomes[index].NeedsReview = false
+				break
+			default:
+				fmt.Fprintln(a.IO.Err, "无效选择；每首待审歌曲必须选择或跳过")
+				continue
+			}
+			if !outcomes[index].NeedsReview {
+				break
 			}
 		}
 	}
 	return outcomes
+}
+
+func (a *App) printOrderedMatchSummary(outcomes []music2bb.MatchResult) {
+	for index, outcome := range outcomes {
+		switch {
+		case outcome.HasSelection && outcome.Video != nil:
+			fmt.Fprintf(a.IO.Out, "[%d/%d] ✓ %s → %s\n", index+1, len(outcomes), outcome.Song.Name, outcome.Video.Title)
+		case outcome.NeedsReview:
+			fmt.Fprintf(a.IO.Out, "[%d/%d] ! %s（%s）\n", index+1, len(outcomes), outcome.Song.Name, reviewReasonText(outcome.ReviewReason))
+		default:
+			fmt.Fprintf(a.IO.Out, "[%d/%d] - %s（已跳过）\n", index+1, len(outcomes), outcome.Song.Name)
+		}
+	}
 }
 
 func hasRequiredReviews(outcomes []music2bb.MatchResult) bool {
@@ -311,9 +349,9 @@ func hasRequiredReviews(outcomes []music2bb.MatchResult) bool {
 
 var errFavoriteSelectionCancelled = errors.New("favorite selection cancelled")
 
-func (a *App) selectFavorite(ctx context.Context, selector string) (music2bb.Favorite, error) {
+func (a *App) selectFavorite(ctx context.Context, session *conversionSession, selector string) (music2bb.Favorite, error) {
 	for {
-		favorites, err := a.Backend.ListFavorites(ctx)
+		favorites, err := session.favorites(ctx)
 		if err != nil {
 			if !a.IO.Interactive {
 				return music2bb.Favorite{}, err
@@ -363,7 +401,7 @@ func (a *App) selectFavorite(ctx context.Context, selector string) (music2bb.Fav
 			continue
 		}
 		if selected == 0 {
-			favorite, created, createErr := a.createFavoriteInline(ctx)
+			favorite, created, createErr := a.createFavoriteInline(ctx, session)
 			if createErr != nil {
 				fmt.Fprintf(a.IO.Err, "创建收藏夹失败: %v\n", createErr)
 				continue
@@ -377,7 +415,7 @@ func (a *App) selectFavorite(ctx context.Context, selector string) (music2bb.Fav
 	}
 }
 
-func (a *App) createFavoriteInline(ctx context.Context) (music2bb.Favorite, bool, error) {
+func (a *App) createFavoriteInline(ctx context.Context, session *conversionSession) (music2bb.Favorite, bool, error) {
 	title, err := a.ask("收藏夹名称（留空返回）: ")
 	if err != nil || title == "" {
 		return music2bb.Favorite{}, false, nil
@@ -390,7 +428,7 @@ func (a *App) createFavoriteInline(ctx context.Context) (music2bb.Favorite, bool
 	if err != nil {
 		return music2bb.Favorite{}, false, err
 	}
-	favorite, err := a.Backend.CreateFavorite(ctx, music2bb.CreateFavoriteRequest{
+	favorite, err := session.createFavorite(ctx, music2bb.CreateFavoriteRequest{
 		Title: strings.TrimSpace(title), Intro: intro, Private: !strings.EqualFold(publicAnswer, "y"),
 	})
 	if err != nil {

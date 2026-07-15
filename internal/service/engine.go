@@ -7,7 +7,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/bagags/music2bb-go/internal/model"
 )
@@ -16,7 +15,7 @@ type Engine struct {
 	playlist PlaylistClient
 	match    MatchClient
 	account  AccountClient
-	matcher  VideoMatcher
+	strategy MatchStrategy
 	now      func() time.Time
 }
 
@@ -24,18 +23,18 @@ type Dependencies struct {
 	Playlist PlaylistClient
 	Match    MatchClient
 	Account  AccountClient
-	Matcher  VideoMatcher
+	Strategy MatchStrategy
 	Now      func() time.Time
 }
 
 func New(deps Dependencies) (*Engine, error) {
-	if deps.Playlist == nil || deps.Match == nil || deps.Account == nil || deps.Matcher == nil {
+	if deps.Playlist == nil || deps.Match == nil || deps.Account == nil || deps.Strategy == nil {
 		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "new", Message: "all engine dependencies are required"}
 	}
 	if deps.Now == nil {
 		deps.Now = time.Now
 	}
-	return &Engine{playlist: deps.Playlist, match: deps.Match, account: deps.Account, matcher: deps.Matcher, now: deps.Now}, nil
+	return &Engine{playlist: deps.Playlist, match: deps.Match, account: deps.Account, strategy: deps.Strategy, now: deps.Now}, nil
 }
 
 func (e *Engine) Login(ctx context.Context, opts LoginOptions, observer Observer) (Account, error) {
@@ -98,6 +97,8 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 	updates := serial(observer, e.now)
 	outcomes := make([]MatchOutcome, len(songs))
 	jobs := make(chan int)
+	var progressMu sync.Mutex
+	completed := 0
 	var workers sync.WaitGroup
 	for worker := 0; worker < opts.Workers; worker++ {
 		workers.Add(1)
@@ -109,17 +110,14 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 					outcome.Failure.Index = index
 				}
 				outcomes[index] = outcome
-				if outcome.NeedsReview {
-					updates.emit(ProgressEvent{
-						Kind: EventWarning, Operation: "match", Current: index + 1, Total: len(songs), Song: &outcomes[index].Song,
-						Message: fmt.Sprintf("警告：%s 缺少可靠歌手证据，需要人工审核，未自动选择", songs[index].Name),
-					})
-				}
-				event := ProgressEvent{Kind: EventSong, Operation: "match", Current: index + 1, Total: len(songs), Song: &outcomes[index].Song}
+				progressMu.Lock()
+				completed++
+				event := ProgressEvent{Kind: EventSong, Operation: "match", Current: completed, Total: len(songs), Song: &outcomes[index].Song}
 				if outcome.HasSelection {
 					event.Match = &outcomes[index].Selected
 				}
 				updates.emit(event)
+				progressMu.Unlock()
 			}
 		}()
 	}
@@ -155,65 +153,70 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 
 func (e *Engine) matchSong(ctx context.Context, song model.Song, opts MatchOptions) MatchOutcome {
 	outcome := MatchOutcome{Song: song}
-	queries := song.AllSearchKeywords()
-	primary := song.SearchKeywordFull()
-	if len(queries) == 0 || queries[0] != primary {
-		queries = append([]string{primary}, queries...)
-	}
-	// A plain-title query is the final fallback. Even when it returns a high
-	// score, it is never auto-selected because same-name songs are common.
-	queries = append(queries, song.SearchKeyword())
-	queries = uniqueStrings(queries)
+	phases := e.strategy.QueryPhases(song)
 	allVideos := make([]model.Video, 0)
 	seenVideos := make(map[string]struct{})
-	reviewCandidateFound := false
-	for _, query := range queries {
-		titleOnly := query == song.SearchKeyword()
-		videos := make([]model.Video, 0, opts.SearchPages*20)
-		for page := 1; page <= opts.SearchPages; page++ {
-			pageVideos, err := e.match.SearchVideos(ctx, query, page, 20)
-			if err != nil {
-				outcome.Failure = &ItemFailure{Operation: "search", Item: song.Name, Reason: err.Error()}
-				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
-					return outcome
-				}
+	var lastSearchErr error
+	for phaseIndex, phase := range phases {
+		for _, query := range uniqueStrings(phase.Queries) {
+			if strings.TrimSpace(query) == "" {
 				continue
 			}
-			videos = append(videos, pageVideos...)
-			for _, video := range pageVideos {
-				key := video.BVID
-				if key == "" {
-					key = video.Title + "\x00" + video.Uploader
+			for page := 1; page <= opts.SearchPages; page++ {
+				pageVideos, err := e.match.SearchVideos(ctx, query, page, 20)
+				if err != nil {
+					lastSearchErr = err
+					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						outcome.Failure = &ItemFailure{Operation: "search", Item: song.Name, Reason: err.Error()}
+						outcome.NeedsReview = true
+						outcome.ReviewReason = model.ReviewSearchFailed
+						return outcome
+					}
+					continue
 				}
-				if _, ok := seenVideos[key]; !ok {
+				for _, video := range pageVideos {
+					key := video.BVID
+					if key == "" {
+						key = video.Title + "\x00" + video.Uploader
+					}
+					if _, ok := seenVideos[key]; ok {
+						continue
+					}
 					seenVideos[key] = struct{}{}
 					allVideos = append(allVideos, video)
 				}
 			}
 		}
-		candidates := e.matcher.Match(song, videos, opts.TopK)
-		if titleOnly && len(candidates) > 0 {
-			reviewCandidateFound = true
-		}
-		for _, candidate := range candidates {
-			if !candidate.Matched {
-				continue
-			}
-			reviewCandidateFound = true
-			if titleOnly || candidate.Video == nil || !hasArtistEvidence(song, *candidate.Video) {
-				continue
-			}
-			outcome.Selected = candidate
-			outcome.HasSelection = true
-			outcome.Candidates = append([]model.MatchResult(nil), candidates...)
+		ranked := e.strategy.Rank(song, append([]model.Video(nil), allVideos...), len(allVideos))
+		decision := e.strategy.Decide(song, ranked, phaseIndex == len(phases)-1)
+		outcome.Candidates = retainCandidates(ranked, opts.TopK)
+		if decision.SelectedIndex >= 0 && decision.SelectedIndex < len(ranked) {
+			outcome.Selected = ranked[decision.SelectedIndex]
+			outcome.HasSelection = outcome.Selected.Video != nil
 			return outcome
 		}
+		outcome.ReviewReason = decision.ReviewReason
+		if !decision.Continue {
+			break
+		}
 	}
-	// Preserve useful review candidates even when the automatic threshold was
-	// not reached. The selected field remains empty.
-	outcome.Candidates = e.matcher.Match(song, allVideos, opts.TopK)
-	outcome.NeedsReview = reviewCandidateFound
+	if len(outcome.Candidates) == 0 {
+		if lastSearchErr != nil {
+			outcome.Failure = &ItemFailure{Operation: "search", Item: song.Name, Reason: lastSearchErr.Error()}
+			outcome.ReviewReason = model.ReviewSearchFailed
+		} else {
+			outcome.ReviewReason = model.ReviewNoCandidates
+		}
+	}
+	outcome.NeedsReview = true
 	return outcome
+}
+
+func retainCandidates(ranked []model.MatchResult, limit int) []model.MatchResult {
+	if limit < len(ranked) {
+		ranked = ranked[:limit]
+	}
+	return append([]model.MatchResult(nil), ranked...)
 }
 
 func (e *Engine) SearchCandidates(ctx context.Context, song model.Song, query string, limit int) ([]model.MatchResult, error) {
@@ -227,7 +230,7 @@ func (e *Engine) SearchCandidates(ctx context.Context, song model.Song, query st
 	if err != nil {
 		return nil, classifyContext("search", ErrorNetwork, err)
 	}
-	return e.matcher.Match(song, videos, len(videos)), nil
+	return e.strategy.Rank(song, videos, len(videos)), nil
 }
 
 func (e *Engine) VideoDetail(ctx context.Context, bvid string) (model.Video, error) {
@@ -317,28 +320,4 @@ func uniqueStrings(values []string) []string {
 		result = append(result, value)
 	}
 	return result
-}
-
-func hasArtistEvidence(song model.Song, video model.Video) bool {
-	artistKeywords := song.ArtistKeywords()
-	if len(artistKeywords) == 0 {
-		return false
-	}
-	evidence := normalizeEvidence(video.Title + " " + video.Uploader)
-	for _, keyword := range artistKeywords {
-		normalized := normalizeEvidence(keyword)
-		if len([]rune(normalized)) >= 2 && strings.Contains(evidence, normalized) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeEvidence(value string) string {
-	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			return unicode.ToLower(r)
-		}
-		return -1
-	}, value)
 }

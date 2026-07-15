@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/bagags/music2bb-go/internal/model"
+	"github.com/bagags/music2bb-go/internal/service"
 )
 
 const (
@@ -258,6 +259,68 @@ func (m *Matcher) Match(song model.Song, videos []model.Video, topK int) []model
 	return results
 }
 
+// QueryPhases returns artist-aware queries followed by a title-only fallback.
+func (m *Matcher) QueryPhases(song model.Song) []service.QueryPhase {
+	title := strings.TrimSpace(song.SearchKeyword())
+	artistQueries := make([]string, 0, 3)
+	for _, query := range append([]string{song.SearchKeywordFull()}, song.AllSearchKeywords()...) {
+		query = strings.TrimSpace(query)
+		if query == "" || query == title || containsStringFold(artistQueries, query) {
+			continue
+		}
+		artistQueries = append(artistQueries, query)
+	}
+	phases := make([]service.QueryPhase, 0, 2)
+	if len(artistQueries) > 0 {
+		phases = append(phases, service.QueryPhase{Queries: artistQueries})
+	}
+	if title != "" {
+		phases = append(phases, service.QueryPhase{Queries: []string{title}})
+	}
+	return phases
+}
+
+// Rank scores the aggregate candidates collected by the service.
+func (m *Matcher) Rank(song model.Song, videos []model.Video, topK int) []model.MatchResult {
+	return m.Match(song, videos, topK)
+}
+
+// Decide preserves artist-evidence selection and applies the balanced
+// title-only thresholds after the final query phase.
+func (m *Matcher) Decide(song model.Song, ranked []model.MatchResult, finalPhase bool) service.MatchDecision {
+	decision := service.MatchDecision{SelectedIndex: -1, Continue: !finalPhase}
+	for index, candidate := range ranked {
+		if candidate.Matched && candidate.Video != nil && hasArtistEvidence(song, *candidate.Video) {
+			decision.SelectedIndex = index
+			decision.Continue = false
+			return decision
+		}
+	}
+	if !finalPhase {
+		decision.ReviewReason = model.ReviewArtistUnverified
+		return decision
+	}
+	if len(ranked) == 0 || ranked[0].Video == nil {
+		decision.ReviewReason = model.ReviewNoCandidates
+		return decision
+	}
+	top := ranked[0]
+	if top.KeywordScore < 70 || top.Score < 35 {
+		decision.ReviewReason = model.ReviewWeakTitle
+		return decision
+	}
+	runnerUp := 0.0
+	if len(ranked) > 1 {
+		runnerUp = ranked[1].Score
+	}
+	if top.Score-runnerUp < 5 {
+		decision.ReviewReason = model.ReviewAmbiguous
+		return decision
+	}
+	decision.SelectedIndex = 0
+	return decision
+}
+
 // FuzzyContains reproduces the Python sliding-window 80-percent comparison.
 func FuzzyContains(text, target string) bool {
 	textRunes := []rune(cleanForMatch(text))
@@ -342,3 +405,38 @@ func containsStandaloneRune(text string, target rune) bool {
 func isWordRune(r rune) bool {
 	return r == '_' || unicode.IsLetter(r) || unicode.IsNumber(r)
 }
+
+func containsStringFold(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(value, target) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasArtistEvidence(song model.Song, video model.Video) bool {
+	artistKeywords := song.ArtistKeywords()
+	if len(artistKeywords) == 0 {
+		return false
+	}
+	evidence := normalizeEvidence(video.Title + " " + video.Uploader)
+	for _, keyword := range artistKeywords {
+		normalized := normalizeEvidence(keyword)
+		if len([]rune(normalized)) >= 2 && strings.Contains(evidence, normalized) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeEvidence(value string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, value)
+}
+
+var _ service.MatchStrategy = (*Matcher)(nil)
