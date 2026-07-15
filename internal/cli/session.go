@@ -79,11 +79,14 @@ func (s *conversionSession) match(ctx context.Context, songs []music2bb.Song, ob
 		SearchPages: s.options.searchPages,
 		TopK:        s.options.topK,
 		Workers:     s.options.workers,
+		Profile:     music2bb.MatchProfile(s.options.matchProfile),
 	}, observer)
 }
 
 func (s *conversionSession) search(ctx context.Context, song music2bb.Song, query string) ([]music2bb.MatchResult, error) {
-	return s.backend.SearchCandidates(ctx, song, query, 10)
+	return s.backend.SearchCandidatesWithOptions(ctx, song, query, music2bb.CandidateSearchOptions{
+		Limit: 10, Profile: music2bb.MatchProfile(s.options.matchProfile),
+	})
 }
 
 func (s *conversionSession) videoDetail(ctx context.Context, bvid string) (music2bb.Video, error) {

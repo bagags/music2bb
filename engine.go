@@ -123,13 +123,33 @@ func (e *Engine) Match(ctx context.Context, songs []Song, options MatchOptions, 
 		SearchPages: options.SearchPages,
 		TopK:        options.TopK,
 		Workers:     options.Workers,
+		Profile:     service.MatchProfile(options.Profile),
+		Weights:     matchWeightsToInternal(options.Weights),
 	}, observerAdapter(observer))
 	return outcomesFromInternal(results), wrapError(err)
 }
 
 func (e *Engine) SearchCandidates(ctx context.Context, song Song, query string, limit int) ([]MatchResult, error) {
-	results, err := e.service.SearchCandidates(ctx, songToInternal(song), query, limit)
+	return e.SearchCandidatesWithOptions(ctx, song, query, CandidateSearchOptions{Limit: limit})
+}
+
+// SearchCandidatesWithOptions ranks one manual search with the selected
+// profile or custom relative weights.
+func (e *Engine) SearchCandidatesWithOptions(ctx context.Context, song Song, query string, options CandidateSearchOptions) ([]MatchResult, error) {
+	results, err := e.service.SearchCandidatesWithOptions(ctx, songToInternal(song), query, service.CandidateSearchOptions{
+		Limit: options.Limit, Profile: service.MatchProfile(options.Profile), Weights: matchWeightsToInternal(options.Weights),
+	})
 	return candidatesFromInternal(results), wrapError(err)
+}
+
+func matchWeightsToInternal(weights *MatchWeights) *service.MatchWeights {
+	if weights == nil {
+		return nil
+	}
+	return &service.MatchWeights{
+		Title: weights.Title, Artist: weights.Artist, Quality: weights.Quality,
+		Official: weights.Official, Popularity: weights.Popularity, Uploader: weights.Uploader,
+	}
 }
 
 func (e *Engine) VideoDetail(ctx context.Context, bvid string) (Video, error) {

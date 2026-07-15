@@ -18,7 +18,7 @@ type Backend interface {
 	LoginWithOptions(context.Context, music2bb.LoginOptions, music2bb.Observer) (music2bb.Account, error)
 	ParsePlaylistWithOptions(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error)
 	Match(context.Context, []music2bb.Song, music2bb.MatchOptions, music2bb.Observer) ([]music2bb.MatchResult, error)
-	SearchCandidates(context.Context, music2bb.Song, string, int) ([]music2bb.MatchResult, error)
+	SearchCandidatesWithOptions(context.Context, music2bb.Song, string, music2bb.CandidateSearchOptions) ([]music2bb.MatchResult, error)
 	VideoDetail(context.Context, string) (music2bb.Video, error)
 	ListFavorites(context.Context) ([]music2bb.Favorite, error)
 	CreateFavorite(context.Context, music2bb.CreateFavoriteRequest) (music2bb.Favorite, error)

@@ -304,6 +304,9 @@ func TestTUIResponsiveRenderSnapshots(t *testing.T) {
 			}
 		})
 	}
+	if details := model.renderDetails(120, 12); !strings.Contains(details, "歌手 25.0") {
+		t.Fatalf("candidate artist score missing from details:\n%s", details)
+	}
 
 	model.width, model.height = 70, 18
 	model.compactPane = 1
@@ -515,7 +518,7 @@ func TestConvertHelpDocumentsTUIFallback(t *testing.T) {
 	if exit := app.Run(context.Background(), []string{"convert", "--help"}); exit != ExitSuccess {
 		t.Fatalf("exit = %d", exit)
 	}
-	if output := errOut.String(); !strings.Contains(output, "--no-tui") || !strings.Contains(output, "全屏审核工作区") {
+	if output := errOut.String(); !strings.Contains(output, "--no-tui") || !strings.Contains(output, "match-profile") || !strings.Contains(output, "全屏审核工作区") {
 		t.Fatalf("help output = %q", output)
 	}
 }
@@ -607,10 +610,10 @@ func sampleOutcomes() []music2bb.MatchResult {
 	reviewVideo := music2bb.Video{BVID: "BV-review", Title: "Latin Song live recording with a deliberately long candidate title", Uploader: "Other", Duration: "04:11"}
 	altVideo := music2bb.Video{BVID: "BV-alt", Title: "Latin Song Alternative", Uploader: "Artist", Duration: "04:10"}
 	return []music2bb.MatchResult{
-		{Song: sampleSongs()[0], Video: &autoVideo, HasSelection: true, Matched: true, Score: 55, KeywordScore: 100, Candidates: []music2bb.MatchResult{{Video: &autoVideo, Score: 55, KeywordScore: 100}}},
+		{Song: sampleSongs()[0], Video: &autoVideo, HasSelection: true, Matched: true, Score: 55, TitleScore: 100, ArtistScore: 100, KeywordScore: 100, Candidates: []music2bb.MatchResult{{Video: &autoVideo, Score: 55, TitleScore: 100, ArtistScore: 100, KeywordScore: 100}}},
 		{Song: sampleSongs()[1], NeedsReview: true, ReviewReason: music2bb.ReviewAmbiguous, Candidates: []music2bb.MatchResult{
-			{Video: &reviewVideo, Score: 40, KeywordScore: 100, QualityScore: 15, OfficialScore: 10, PopularityScore: 8},
-			{Video: &altVideo, Score: 37, KeywordScore: 100, QualityScore: 5, OfficialScore: 5, PopularityScore: 4},
+			{Video: &reviewVideo, Score: 40, TitleScore: 100, ArtistScore: 25, KeywordScore: 100, QualityScore: 15, OfficialScore: 10, PopularityScore: 8},
+			{Video: &altVideo, Score: 37, TitleScore: 100, ArtistScore: 100, KeywordScore: 100, QualityScore: 5, OfficialScore: 5, PopularityScore: 4},
 		}},
 	}
 }

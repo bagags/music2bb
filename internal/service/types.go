@@ -39,6 +39,30 @@ type MatchOptions struct {
 	SearchPages int
 	TopK        int
 	Workers     int
+	Profile     MatchProfile
+	Weights     *MatchWeights
+}
+
+type MatchProfile string
+
+const (
+	MatchProfileStandard  MatchProfile = "standard"
+	MatchProfileClassical MatchProfile = "classical"
+)
+
+type MatchWeights struct {
+	Title      float64
+	Artist     float64
+	Quality    float64
+	Official   float64
+	Popularity float64
+	Uploader   float64
+}
+
+type CandidateSearchOptions struct {
+	Limit   int
+	Profile MatchProfile
+	Weights *MatchWeights
 }
 
 func (o MatchOptions) normalized() MatchOptions {
@@ -118,4 +142,10 @@ type MatchStrategy interface {
 	QueryPhases(model.Song) []QueryPhase
 	Rank(model.Song, []model.Video, int) []model.MatchResult
 	Decide(model.Song, []model.MatchResult, bool) MatchDecision
+}
+
+// MatchStrategyResolver creates an immutable scorer for one public operation.
+// Strategies that only support the standard defaults may omit this interface.
+type MatchStrategyResolver interface {
+	ResolveMatchStrategy(MatchProfile, *MatchWeights) (MatchStrategy, error)
 }

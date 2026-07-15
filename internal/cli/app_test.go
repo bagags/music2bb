@@ -11,17 +11,20 @@ import (
 )
 
 type fakeBackend struct {
-	loginOpts music2bb.LoginOptions
-	matchOpts music2bb.MatchOptions
-	parseOpts []music2bb.ParseOptions
-	parse     func(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error)
-	created   music2bb.CreateFavoriteRequest
-	match     []music2bb.MatchResult
-	addedTo   int64
-	loginErr  error
+	loginOpts  music2bb.LoginOptions
+	matchOpts  music2bb.MatchOptions
+	searchOpts music2bb.CandidateSearchOptions
+	parseOpts  []music2bb.ParseOptions
+	parse      func(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error)
+	created    music2bb.CreateFavoriteRequest
+	match      []music2bb.MatchResult
+	addedTo    int64
+	loginErr   error
+	loginCalls int
 }
 
 func (f *fakeBackend) LoginWithOptions(_ context.Context, opts music2bb.LoginOptions, _ music2bb.Observer) (music2bb.Account, error) {
+	f.loginCalls++
 	f.loginOpts = opts
 	return music2bb.Account{ID: 1, Name: "tester"}, f.loginErr
 }
@@ -43,7 +46,8 @@ func (f *fakeBackend) Match(_ context.Context, songs []music2bb.Song, opts music
 	return []music2bb.MatchResult{{Song: songs[0], HasSelection: true, Video: &video, Matched: true}}, nil
 }
 
-func (f *fakeBackend) SearchCandidates(context.Context, music2bb.Song, string, int) ([]music2bb.MatchResult, error) {
+func (f *fakeBackend) SearchCandidatesWithOptions(_ context.Context, _ music2bb.Song, _ string, options music2bb.CandidateSearchOptions) ([]music2bb.MatchResult, error) {
+	f.searchOpts = options
 	return nil, nil
 }
 
@@ -107,11 +111,11 @@ func testApp(backend Backend) (*App, *bytes.Buffer, *bytes.Buffer) {
 func TestConvertInterspersedOptions(t *testing.T) {
 	backend := &fakeBackend{}
 	app, out, errOut := testApp(backend)
-	exit := app.Run(context.Background(), []string{"convert", "https://example.test/list", "--search-pages", "2", "--top-k=5", "--workers", "3", "--favorite", "target", "--yes", "--no-qr-login"})
+	exit := app.Run(context.Background(), []string{"convert", "https://example.test/list", "--search-pages", "2", "--top-k=5", "--workers", "3", "--match-profile", "classical", "--favorite", "target", "--yes", "--no-qr-login"})
 	if exit != ExitSuccess {
 		t.Fatalf("exit = %d, stderr=%s", exit, errOut.String())
 	}
-	if backend.matchOpts != (music2bb.MatchOptions{SearchPages: 2, TopK: 5, Workers: 3}) {
+	if backend.matchOpts != (music2bb.MatchOptions{SearchPages: 2, TopK: 5, Workers: 3, Profile: music2bb.MatchProfileClassical}) {
 		t.Fatalf("match options = %#v", backend.matchOpts)
 	}
 	if backend.loginOpts.AllowQR {
@@ -119,6 +123,29 @@ func TestConvertInterspersedOptions(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "成功: 1") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestConvertRejectsMatchProfileBeforeBackendWork(t *testing.T) {
+	backend := &fakeBackend{}
+	app, _, errOut := testApp(backend)
+	exit := app.Run(context.Background(), []string{"convert", "https://example.test/list", "--match-profile", "romantic"})
+	if exit != ExitInvalidInput || backend.loginCalls != 0 {
+		t.Fatalf("exit=%d loginCalls=%d stderr=%q", exit, backend.loginCalls, errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "standard 或 classical") {
+		t.Fatalf("stderr = %q", errOut.String())
+	}
+}
+
+func TestConversionSessionPropagatesProfileToManualSearch(t *testing.T) {
+	backend := &fakeBackend{}
+	session := newConversionSession(backend, nil, "https://example.test/list", convertOptions{matchProfile: string(music2bb.MatchProfileClassical)}, music2bb.BrowserAuto)
+	if _, err := session.search(context.Background(), music2bb.Song{Name: "song"}, "query"); err != nil {
+		t.Fatal(err)
+	}
+	if backend.searchOpts != (music2bb.CandidateSearchOptions{Limit: 10, Profile: music2bb.MatchProfileClassical}) {
+		t.Fatalf("search options = %#v", backend.searchOpts)
 	}
 }
 
@@ -362,7 +389,7 @@ func TestConvertAutomaticallyReviewsUnsafeMatch(t *testing.T) {
 	video := music2bb.Video{BVID: "BV-review", Title: "same name", Uploader: "someone"}
 	backend := &fakeBackend{match: []music2bb.MatchResult{{
 		Song: music2bb.Song{Name: "same name"}, NeedsReview: true,
-		Candidates: []music2bb.MatchResult{{Video: &video, Score: 42}},
+		Candidates: []music2bb.MatchResult{{Video: &video, Score: 42, TitleScore: 88, ArtistScore: 77, KeywordScore: 88}},
 	}}}
 	app, out, errOut := testApp(backend)
 	app.IO.Interactive = true
@@ -371,7 +398,7 @@ func TestConvertAutomaticallyReviewsUnsafeMatch(t *testing.T) {
 	if exit != ExitSuccess {
 		t.Fatalf("exit = %d, stderr=%q, stdout=%q", exit, errOut.String(), out.String())
 	}
-	if backend.addedTo != 9 || !strings.Contains(out.String(), "输入候选序号") {
+	if backend.addedTo != 9 || !strings.Contains(out.String(), "输入候选序号") || !strings.Contains(out.String(), "歌手 77.0") {
 		t.Fatalf("addedTo=%d output=%q", backend.addedTo, out.String())
 	}
 }

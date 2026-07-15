@@ -6,6 +6,36 @@ import (
 	"time"
 )
 
+// MatchProfile selects a built-in matching policy and weight preset.
+type MatchProfile string
+
+const (
+	MatchProfileStandard  MatchProfile = "standard"
+	MatchProfileClassical MatchProfile = "classical"
+)
+
+// MatchWeights controls the relative contribution of each normalized
+// matching component. Values may use any non-negative scale with at least one
+// positive entry; each call clones and normalizes them by their sum.
+type MatchWeights struct {
+	Title      float64
+	Artist     float64
+	Quality    float64
+	Official   float64
+	Popularity float64
+	Uploader   float64
+}
+
+// StandardMatchWeights returns the artist-oriented standard preset.
+func StandardMatchWeights() MatchWeights {
+	return MatchWeights{Title: 40, Artist: 25, Quality: 10, Official: 10, Popularity: 10, Uploader: 5}
+}
+
+// ClassicalMatchWeights returns the title-oriented classical preset.
+func ClassicalMatchWeights() MatchWeights {
+	return MatchWeights{Title: 55, Artist: 10, Quality: 10, Official: 10, Popularity: 10, Uploader: 5}
+}
+
 type BrowserPolicy string
 
 const (
@@ -41,6 +71,15 @@ type MatchOptions struct {
 	SearchPages int
 	TopK        int
 	Workers     int
+	Profile     MatchProfile
+	Weights     *MatchWeights
+}
+
+// CandidateSearchOptions controls ranking for one manual candidate search.
+type CandidateSearchOptions struct {
+	Limit   int
+	Profile MatchProfile
+	Weights *MatchWeights
 }
 
 type HTTPClients struct {

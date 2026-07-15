@@ -75,6 +75,22 @@ func (f *fakeRemote) AddToFavorite(context.Context, int64, []model.Video) (AddRe
 
 type fakeMatcher struct{}
 
+type resolvingMatcher struct {
+	fakeMatcher
+	resolves atomic.Int32
+	profile  MatchProfile
+	weights  MatchWeights
+}
+
+func (m *resolvingMatcher) ResolveMatchStrategy(profile MatchProfile, weights *MatchWeights) (MatchStrategy, error) {
+	m.resolves.Add(1)
+	m.profile = profile
+	if weights != nil {
+		m.weights = *weights
+	}
+	return fakeMatcher{}, nil
+}
+
 func (fakeMatcher) QueryPhases(song model.Song) []QueryPhase {
 	phases := []QueryPhase{{Queries: song.AllSearchKeywords()}}
 	if song.SearchKeyword() != song.SearchKeywordFull() {
@@ -215,6 +231,33 @@ func TestMatchBoundsWorkersAndPreservesOrder(t *testing.T) {
 		if len(outcome.Candidates) != 1 || !outcome.HasSelection {
 			t.Fatalf("outcome %d did not retain/select candidates: %#v", index, outcome)
 		}
+	}
+}
+
+func TestMatchResolvesOneImmutableStrategyPerCall(t *testing.T) {
+	remote := &fakeRemote{}
+	resolver := &resolvingMatcher{}
+	engine, err := New(Dependencies{
+		Playlist: fakePlaylist{}, Match: remote, Account: remote, Strategy: resolver,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	songs := []model.Song{{Name: "one", Artist: "artist"}, {Name: "two", Artist: "artist"}, {Name: "three", Artist: "artist"}}
+	weights := MatchWeights{Title: 2, Artist: 1}
+	if _, err := engine.Match(context.Background(), songs, MatchOptions{
+		Workers: 3, SearchPages: 1, Profile: MatchProfileClassical, Weights: &weights,
+	}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.resolves.Load() != 1 || resolver.profile != MatchProfileClassical || resolver.weights != weights {
+		t.Fatalf("resolver state = calls %d profile %q weights %#v", resolver.resolves.Load(), resolver.profile, resolver.weights)
+	}
+	if _, err := engine.SearchCandidatesWithOptions(context.Background(), model.Song{Name: "song"}, "query", CandidateSearchOptions{Profile: MatchProfileStandard}); err != nil {
+		t.Fatal(err)
+	}
+	if resolver.resolves.Load() != 2 {
+		t.Fatalf("resolver calls after search = %d, want 2", resolver.resolves.Load())
 	}
 }
 

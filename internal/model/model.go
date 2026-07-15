@@ -54,6 +54,8 @@ type MatchResult struct {
 	Song            Song
 	Video           *Video
 	Score           float64
+	TitleScore      float64
+	ArtistScore     float64
 	KeywordScore    float64
 	QualityScore    float64
 	OfficialScore   float64
@@ -216,9 +218,16 @@ func (s Song) AllSearchKeywords() []string {
 // safe. The order is deterministic and duplicates are removed.
 func (s Song) ArtistKeywords() []string {
 	artist := s.CleanArtist()
-	keywords := make([]string, 0, 5)
+	keywords := make([]string, 0, 8)
 	if artist != "" {
 		keywords = append(keywords, artist)
+	}
+	for _, credit := range splitArtistCredits(s.Artist) {
+		credit = artistParentheses.ReplaceAllString(credit, "")
+		credit = artistWideParentheses.ReplaceAllString(credit, "")
+		if credit = strings.TrimSpace(credit); credit != "" {
+			keywords = append(keywords, credit)
+		}
 	}
 	for _, entry := range artistAliases {
 		if strings.Contains(s.Artist, entry.needle) || strings.Contains(artist, entry.needle) {
@@ -241,4 +250,15 @@ func (s Song) ArtistKeywords() []string {
 		result = append(result, keyword)
 	}
 	return result
+}
+
+func splitArtistCredits(artist string) []string {
+	return strings.FieldsFunc(artist, func(r rune) bool {
+		switch r {
+		case ',', '，', '、', '/', '&', '＆', ';', '；':
+			return true
+		default:
+			return false
+		}
+	})
 }

@@ -1122,8 +1122,8 @@ func (m tuiModel) renderDetails(width, height int) string {
 		}
 		title := ansi.WrapWc(candidate.Video.Title, maxInt(20, width-8), "")
 		fmt.Fprintf(&b, "%s%d. %s\n", marker, index+1, title)
-		fmt.Fprintf(&b, "    总分 %.1f  标题 %.1f  质量 %.1f  官方 %.1f  热度 %.1f  UP %.1f\n",
-			candidate.Score, candidate.KeywordScore, candidate.QualityScore, candidate.OfficialScore, candidate.PopularityScore, candidate.UploaderScore)
+		fmt.Fprintf(&b, "    总分 %.1f  标题 %.1f  歌手 %.1f  质量 %.1f  官方 %.1f  热度 %.1f  UP %.1f\n",
+			candidate.Score, candidate.TitleScore, candidate.ArtistScore, candidate.QualityScore, candidate.OfficialScore, candidate.PopularityScore, candidate.UploaderScore)
 		fmt.Fprintf(&b, "    UP: %s  时长: %s  %s\n", fallback(candidate.Video.Uploader, "—"), fallback(candidate.Video.Duration, "—"), candidate.Video.BVID)
 		fmt.Fprintf(&b, "    %s\n\n", candidate.Video.URL())
 	}

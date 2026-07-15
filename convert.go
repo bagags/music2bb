@@ -48,9 +48,14 @@ func videoToInternal(video Video) model.Video {
 }
 
 func candidateFromInternal(match model.MatchResult) MatchResult {
+	titleScore := match.TitleScore
+	if titleScore == 0 && match.KeywordScore != 0 {
+		titleScore = match.KeywordScore
+	}
 	result := MatchResult{
 		Song: songFromInternal(match.Song), Score: match.Score,
-		KeywordScore: match.KeywordScore, QualityScore: match.QualityScore,
+		TitleScore: titleScore, ArtistScore: match.ArtistScore,
+		KeywordScore: titleScore, QualityScore: match.QualityScore,
 		OfficialScore: match.OfficialScore, PopularityScore: match.PopularityScore,
 		UploaderScore: match.UploaderScore, Matched: match.Matched,
 		HasSelection: match.Video != nil, ManualOverride: match.ManualOverride,
@@ -64,9 +69,14 @@ func candidateFromInternal(match model.MatchResult) MatchResult {
 }
 
 func candidateToInternal(match MatchResult) model.MatchResult {
+	titleScore := match.TitleScore
+	if titleScore == 0 && match.KeywordScore != 0 {
+		titleScore = match.KeywordScore
+	}
 	result := model.MatchResult{
 		Song: songToInternal(match.Song), Score: match.Score,
-		KeywordScore: match.KeywordScore, QualityScore: match.QualityScore,
+		TitleScore: titleScore, ArtistScore: match.ArtistScore,
+		KeywordScore: titleScore, QualityScore: match.QualityScore,
 		OfficialScore: match.OfficialScore, PopularityScore: match.PopularityScore,
 		UploaderScore: match.UploaderScore, Matched: match.Matched,
 		ManualOverride: match.ManualOverride, ReviewReason: model.ReviewReason(match.ReviewReason),

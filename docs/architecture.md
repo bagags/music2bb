@@ -64,13 +64,15 @@ or site-client response types. Conversion at the public boundary is deliberate:
 it lets internal representations evolve without silently changing the reusable
 API. Slices and nested values returned by the engine are caller-owned.
 
-Matching depends on a strategy seam rather than a ranking-only interface. A
-strategy supplies ordered query phases, ranks the deduplicated aggregate, and
-decides whether the service should stop or continue. The balanced strategy runs
-artist and alias queries before a title-only fallback, preserves automatic
-selection backed by artist evidence, and accepts an artist-unverified winner
-only when its title score, total score, and runner-up margin all meet the
-documented thresholds. Every unresolved outcome carries a public review reason.
+Matching depends on a strategy seam rather than a ranking-only interface. The
+configured matcher resolves one immutable scorer per match or candidate-search
+call, so concurrent calls can safely use standard, classical, or custom
+relative weights. A scorer supplies ordered query phases, ranks the deduplicated
+aggregate on six normalized components, and decides whether the service should
+stop or continue. Standard mode may stop after exact artist evidence; classical
+mode always aggregates the title-only fallback. Both apply profile-specific
+title, total-score, and runner-up thresholds, and every unresolved outcome
+carries a public review reason.
 
 The CLI's full-screen and plain frontends share one conversion session for
 login, Chromium installation/retry, parsing, matching, manual search, favorite

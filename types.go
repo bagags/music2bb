@@ -38,9 +38,13 @@ func (v Video) URL() string { return "https://www.bilibili.com/video/" + v.BVID 
 // MatchResult represents either a selected result returned by Match or one
 // ranked candidate returned by SearchCandidates/in Candidates.
 type MatchResult struct {
-	Song            Song
-	Video           *Video
-	Score           float64
+	Song        Song
+	Video       *Video
+	Score       float64
+	TitleScore  float64
+	ArtistScore float64
+	// KeywordScore remains an alias of TitleScore for source compatibility.
+	// Deprecated: use TitleScore.
 	KeywordScore    float64
 	QualityScore    float64
 	OfficialScore   float64

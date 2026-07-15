@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -502,6 +503,150 @@ func TestInvalidInputUsesMachineReadableCategory(t *testing.T) {
 	_, err = engine.ParsePlaylistWithOptions(context.Background(), "https://example.test/list", ParseOptions{BrowserPolicy: BrowserPolicy("sometimes")}, nil)
 	if CategoryOf(err) != ErrorInvalidInput {
 		t.Fatalf("invalid policy category = %q, want %q (err=%v)", CategoryOf(err), ErrorInvalidInput, err)
+	}
+}
+
+func TestMatchWeightPresetsAndInvalidConfigurations(t *testing.T) {
+	t.Parallel()
+	if got := StandardMatchWeights(); got != (MatchWeights{Title: 40, Artist: 25, Quality: 10, Official: 10, Popularity: 10, Uploader: 5}) {
+		t.Fatalf("standard preset = %#v", got)
+	}
+	if got := ClassicalMatchWeights(); got != (MatchWeights{Title: 55, Artist: 10, Quality: 10, Official: 10, Popularity: 10, Uploader: 5}) {
+		t.Fatalf("classical preset = %#v", got)
+	}
+
+	var searchCalls atomic.Int32
+	engine := newTestEngine(t, roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		searchCalls.Add(1)
+		return jsonResponse(`{"code":0,"data":{"result":[]}}`), nil
+	}))
+	invalidWeights := []MatchWeights{
+		{},
+		{Title: -1, Artist: 2},
+		{Title: math.NaN()},
+		{Title: math.Inf(1)},
+	}
+	for _, weights := range invalidWeights {
+		_, err := engine.Match(context.Background(), []Song{{Name: "song"}}, MatchOptions{Weights: &weights}, nil)
+		if CategoryOf(err) != ErrorInvalidInput {
+			t.Fatalf("invalid weights %#v category = %q (err=%v)", weights, CategoryOf(err), err)
+		}
+	}
+	_, err := engine.SearchCandidatesWithOptions(context.Background(), Song{Name: "song"}, "query", CandidateSearchOptions{Profile: MatchProfile("unknown")})
+	if CategoryOf(err) != ErrorInvalidInput {
+		t.Fatalf("unknown profile category = %q (err=%v)", CategoryOf(err), err)
+	}
+	if searchCalls.Load() != 0 {
+		t.Fatalf("invalid configuration reached backend %d time(s)", searchCalls.Load())
+	}
+}
+
+func profileSearchRoundTripper() http.RoundTripper {
+	return roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return jsonResponse(`{"code":0,"data":{"result":[{"result_type":"video","data":[` +
+			`{"bvid":"BV-exact","aid":1,"title":"Moon Light Sonata","author":"Other Performer"},` +
+			`{"bvid":"BV-artist","aid":2,"title":"Moon Light","author":"Right Artist"}` +
+			`] }]}}`), nil
+	})
+}
+
+func TestCandidateSearchProfilesAreIsolatedPerConcurrentCall(t *testing.T) {
+	engine := newTestEngine(t, profileSearchRoundTripper(), WithRateLimiter(&countingLimiter{}))
+	song := Song{Name: "Moon Light Sonata", Artist: "Right Artist"}
+
+	legacy, err := engine.SearchCandidates(context.Background(), song, "query", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	standard, err := engine.SearchCandidatesWithOptions(context.Background(), song, "query", CandidateSearchOptions{Limit: 2, Profile: MatchProfileStandard})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(legacy, standard) {
+		t.Fatalf("compatibility wrapper differs:\nlegacy=%#v\nstandard=%#v", legacy, standard)
+	}
+	titleOnly := MatchWeights{Title: 2}
+	titleRanked, err := engine.SearchCandidatesWithOptions(context.Background(), song, "query", CandidateSearchOptions{Limit: 2, Weights: &titleOnly})
+	if err != nil || titleRanked[0].Video == nil || titleRanked[0].Video.BVID != "BV-exact" {
+		t.Fatalf("title-only custom ranking = %#v, %v", titleRanked, err)
+	}
+	artistOnly := MatchWeights{Artist: 9}
+	artistRanked, err := engine.SearchCandidatesWithOptions(context.Background(), song, "query", CandidateSearchOptions{Limit: 2, Weights: &artistOnly})
+	if err != nil || artistRanked[0].Video == nil || artistRanked[0].Video.BVID != "BV-artist" {
+		t.Fatalf("artist-only custom ranking = %#v, %v", artistRanked, err)
+	}
+	if titleOnly != (MatchWeights{Title: 2}) || artistOnly != (MatchWeights{Artist: 9}) {
+		t.Fatalf("public custom weights mutated: title=%#v artist=%#v", titleOnly, artistOnly)
+	}
+
+	const calls = 24
+	var group sync.WaitGroup
+	errs := make(chan error, calls)
+	for index := 0; index < calls; index++ {
+		profile := MatchProfileStandard
+		want := "BV-artist"
+		if index%2 == 1 {
+			profile = MatchProfileClassical
+			want = "BV-exact"
+		}
+		group.Add(1)
+		go func(profile MatchProfile, want string) {
+			defer group.Done()
+			results, searchErr := engine.SearchCandidatesWithOptions(context.Background(), song, "query", CandidateSearchOptions{Limit: 2, Profile: profile})
+			if searchErr != nil {
+				errs <- searchErr
+				return
+			}
+			if len(results) != 2 || results[0].Video == nil || results[0].Video.BVID != want {
+				errs <- fmt.Errorf("profile %q first result = %#v, want %s", profile, results, want)
+			}
+		}(profile, want)
+	}
+	group.Wait()
+	close(errs)
+	for err := range errs {
+		t.Error(err)
+	}
+}
+
+func TestPublicMatchScoresExposeTitleArtistAndKeywordAlias(t *testing.T) {
+	t.Parallel()
+	video := model.Video{BVID: "BV1"}
+	converted := candidateFromInternal(model.MatchResult{
+		Video: &video, Score: 70, TitleScore: 88, ArtistScore: 77, KeywordScore: 88,
+	})
+	if converted.TitleScore != 88 || converted.ArtistScore != 77 || converted.KeywordScore != converted.TitleScore {
+		t.Fatalf("public scores = %#v", converted)
+	}
+}
+
+func TestClassicalMatchReachesTitleFallbackAndAcceptsDifferentRecording(t *testing.T) {
+	var mu sync.Mutex
+	var queries []string
+	transport := roundTripperFunc(func(request *http.Request) (*http.Response, error) {
+		query := request.URL.Query().Get("keyword")
+		mu.Lock()
+		queries = append(queries, query)
+		mu.Unlock()
+		if query == "Moon Light Sonata" {
+			return jsonResponse(`{"code":0,"data":{"result":[{"result_type":"video","data":[{"bvid":"BV-different","aid":2,"title":"Moon Light Sonata","author":"Other Performer"}]}]}}`), nil
+		}
+		return jsonResponse(`{"code":0,"data":{"result":[{"result_type":"video","data":[{"bvid":"BV-weak","aid":1,"title":"Moon Light","author":"Other Performer"}]}]}}`), nil
+	})
+	engine := newTestEngine(t, transport, WithRateLimiter(&countingLimiter{}))
+	outcomes, err := engine.Match(context.Background(), []Song{{Name: "Moon Light Sonata", Artist: "Right Artist"}}, MatchOptions{
+		SearchPages: 1, TopK: 3, Workers: 1, Profile: MatchProfileClassical,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 || !outcomes[0].HasSelection || outcomes[0].Video == nil || outcomes[0].Video.BVID != "BV-different" {
+		t.Fatalf("classical outcome = %#v", outcomes)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if got, want := fmt.Sprint(queries), "[Moon Light Sonata Right Artist Moon Light Sonata]"; got != want {
+		t.Fatalf("queries = %s, want %s", got, want)
 	}
 }
 

@@ -16,6 +16,7 @@ type convertOptions struct {
 	searchPages  int
 	topK         int
 	workers      int
+	matchProfile string
 	favorite     string
 	yes          bool
 	browser      string
@@ -34,10 +35,11 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 		fmt.Fprintln(a.IO.Err, "交互终端默认启动全屏审核工作区；使用 --no-tui 强制文本界面。")
 		set.PrintDefaults()
 	}
-	options := convertOptions{searchPages: 3, topK: 3, workers: 4, browser: string(music2bb.BrowserAuto), qrLogin: true}
+	options := convertOptions{searchPages: 3, topK: 3, workers: 4, matchProfile: string(music2bb.MatchProfileStandard), browser: string(music2bb.BrowserAuto), qrLogin: true}
 	set.IntVar(&options.searchPages, "search-pages", options.searchPages, "每首歌曲搜索页数")
 	set.IntVar(&options.topK, "top-k", options.topK, "保留候选数量")
 	set.IntVar(&options.workers, "workers", options.workers, "并发匹配数量")
+	set.StringVar(&options.matchProfile, "match-profile", options.matchProfile, "standard|classical")
 	set.StringVar(&options.favorite, "favorite", "", "收藏夹 ID 或完整名称")
 	set.BoolVar(&options.yes, "yes", false, "无需确认")
 	set.StringVar(&options.browser, "browser", options.browser, "auto|never|always")
@@ -50,7 +52,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	set.BoolVar(&options.noTUI, "no-tui", false, "使用引导式文本界面")
 	noQR := false
 	set.BoolVar(&noQR, "no-qr-login", false, "禁止扫码登录")
-	valueFlags := map[string]bool{"--search-pages": true, "--top-k": true, "--workers": true, "--favorite": true, "--browser": true, "--config-dir": true}
+	valueFlags := map[string]bool{"--search-pages": true, "--top-k": true, "--workers": true, "--match-profile": true, "--favorite": true, "--browser": true, "--config-dir": true}
 	if err := set.Parse(interspersed(args, valueFlags)); err != nil {
 		if err == flag.ErrHelp {
 			return ExitSuccess
@@ -67,6 +69,11 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	policy := music2bb.BrowserPolicy(options.browser)
 	if policy != music2bb.BrowserAuto && policy != music2bb.BrowserNever && policy != music2bb.BrowserAlways {
 		fmt.Fprintln(a.IO.Err, "--browser 必须是 auto、never 或 always")
+		return ExitInvalidInput
+	}
+	profile := music2bb.MatchProfile(options.matchProfile)
+	if profile != music2bb.MatchProfileStandard && profile != music2bb.MatchProfileClassical {
+		fmt.Fprintln(a.IO.Err, "--match-profile 必须是 standard 或 classical")
 		return ExitInvalidInput
 	}
 	if a.Backend == nil {
@@ -235,7 +242,7 @@ func (a *App) manualMatch(ctx context.Context, session *conversionSession, song 
 	}
 	for index, candidate := range candidates {
 		if candidate.Video != nil {
-			fmt.Fprintf(a.IO.Out, "%d. %s - %s (%.1f)\n", index+1, candidate.Video.Title, candidate.Video.Uploader, candidate.Score)
+			fmt.Fprintf(a.IO.Out, "%d. %s - %s (总分 %.1f 标题 %.1f 歌手 %.1f)\n", index+1, candidate.Video.Title, candidate.Video.Uploader, candidate.Score, candidate.TitleScore, candidate.ArtistScore)
 		}
 	}
 	choice, _ := a.ask("选择候选序号、输入 BV 号，或 x 跳过: ")
@@ -271,7 +278,7 @@ func (a *App) reviewMatches(ctx context.Context, session *conversionSession, out
 			fmt.Fprintf(a.IO.Out, "[%d/%d] %s - %s（%s）\n", index+1, len(outcomes), outcomes[index].Song.Name, outcomes[index].Song.Artist, reviewReasonText(outcomes[index].ReviewReason))
 			for candidateIndex, candidate := range outcomes[index].Candidates {
 				if candidate.Video != nil {
-					fmt.Fprintf(a.IO.Out, "  %d. %s - %s | 总分 %.1f 标题 %.1f\n", candidateIndex+1, candidate.Video.Title, candidate.Video.Uploader, candidate.Score, candidate.KeywordScore)
+					fmt.Fprintf(a.IO.Out, "  %d. %s - %s | 总分 %.1f 标题 %.1f 歌手 %.1f\n", candidateIndex+1, candidate.Video.Title, candidate.Video.Uploader, candidate.Score, candidate.TitleScore, candidate.ArtistScore)
 				}
 			}
 			prompt := "输入候选序号、s 手动搜索、x 跳过"

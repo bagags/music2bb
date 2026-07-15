@@ -90,6 +90,10 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 	if len(songs) == 0 {
 		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "match", Message: "songs are required"}
 	}
+	strategy, err := e.resolveMatchStrategy("match", opts.Profile, opts.Weights)
+	if err != nil {
+		return nil, err
+	}
 	opts = opts.normalized()
 	if opts.Workers > len(songs) {
 		opts.Workers = len(songs)
@@ -105,7 +109,7 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
-				outcome := e.matchSong(ctx, songs[index], opts)
+				outcome := e.matchSong(ctx, strategy, songs[index], opts)
 				if outcome.Failure != nil {
 					outcome.Failure.Index = index
 				}
@@ -151,9 +155,9 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 	return outcomes, nil
 }
 
-func (e *Engine) matchSong(ctx context.Context, song model.Song, opts MatchOptions) MatchOutcome {
+func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song model.Song, opts MatchOptions) MatchOutcome {
 	outcome := MatchOutcome{Song: song}
-	phases := e.strategy.QueryPhases(song)
+	phases := strategy.QueryPhases(song)
 	allVideos := make([]model.Video, 0)
 	seenVideos := make(map[string]struct{})
 	var lastSearchErr error
@@ -187,8 +191,8 @@ func (e *Engine) matchSong(ctx context.Context, song model.Song, opts MatchOptio
 				}
 			}
 		}
-		ranked := e.strategy.Rank(song, append([]model.Video(nil), allVideos...), len(allVideos))
-		decision := e.strategy.Decide(song, ranked, phaseIndex == len(phases)-1)
+		ranked := strategy.Rank(song, append([]model.Video(nil), allVideos...), len(allVideos))
+		decision := strategy.Decide(song, ranked, phaseIndex == len(phases)-1)
 		outcome.Candidates = retainCandidates(ranked, opts.TopK)
 		if decision.SelectedIndex >= 0 && decision.SelectedIndex < len(ranked) {
 			outcome.Selected = ranked[decision.SelectedIndex]
@@ -220,17 +224,45 @@ func retainCandidates(ranked []model.MatchResult, limit int) []model.MatchResult
 }
 
 func (e *Engine) SearchCandidates(ctx context.Context, song model.Song, query string, limit int) ([]model.MatchResult, error) {
+	return e.SearchCandidatesWithOptions(ctx, song, query, CandidateSearchOptions{Limit: limit})
+}
+
+func (e *Engine) SearchCandidatesWithOptions(ctx context.Context, song model.Song, query string, options CandidateSearchOptions) ([]model.MatchResult, error) {
 	if strings.TrimSpace(query) == "" {
 		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "search", Message: "query is required"}
 	}
-	if limit < 1 {
-		limit = 10
+	strategy, err := e.resolveMatchStrategy("search", options.Profile, options.Weights)
+	if err != nil {
+		return nil, err
 	}
-	videos, err := e.match.SearchVideos(ctx, query, 1, limit)
+	if options.Limit < 1 {
+		options.Limit = 10
+	}
+	videos, err := e.match.SearchVideos(ctx, query, 1, options.Limit)
 	if err != nil {
 		return nil, classifyContext("search", ErrorNetwork, err)
 	}
-	return e.strategy.Rank(song, videos, len(videos)), nil
+	return strategy.Rank(song, videos, len(videos)), nil
+}
+
+func (e *Engine) resolveMatchStrategy(operation string, profile MatchProfile, weights *MatchWeights) (MatchStrategy, error) {
+	if profile == "" {
+		profile = MatchProfileStandard
+	}
+	if profile != MatchProfileStandard && profile != MatchProfileClassical {
+		return nil, &OperationError{Category: ErrorInvalidInput, Operation: operation, Message: fmt.Sprintf("unknown match profile %q", profile)}
+	}
+	if resolver, ok := e.strategy.(MatchStrategyResolver); ok {
+		strategy, err := resolver.ResolveMatchStrategy(profile, weights)
+		if err != nil {
+			return nil, &OperationError{Category: ErrorInvalidInput, Operation: operation, Err: err}
+		}
+		return strategy, nil
+	}
+	if profile != MatchProfileStandard || weights != nil {
+		return nil, &OperationError{Category: ErrorInvalidInput, Operation: operation, Message: "match strategy does not support profiles or custom weights"}
+	}
+	return e.strategy, nil
 }
 
 func (e *Engine) VideoDetail(ctx context.Context, bvid string) (model.Video, error) {

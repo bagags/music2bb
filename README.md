@@ -18,7 +18,7 @@
 - 保留酷狗直连 API、页面 JSON、分页、签名和歌曲清理优化
 - 解析用户提供的 Apple Music 公开分享歌单页面及其中的公开元数据，无需 Apple 账号登录
 - Bilibili 扫码登录、Cookie 持久化、WBI 签名和收藏夹管理
-- 关键词、音质、官方来源、热度和 UP 主权重综合评分
+- 标题、歌手、音质、官方来源、热度和 UP 主六项归一化权重综合评分
 - 默认 4 个受限并发 worker，保持输入与结果顺序
 - 终端中自动启动覆盖登录、解析、匹配、审核、收藏夹、确认、写入和回执的全屏工作区
 - 平衡式分阶段匹配、可解释审核原因、完全手动匹配和候选覆盖
@@ -85,6 +85,7 @@ music2bb convert '<playlist-url>' --top-k 5 --manual-review
 | `--search-pages` | `3` | 每首歌搜索的页数 |
 | `--top-k` | `3` | 为审核保留的有序候选数 |
 | `--workers` | `4` | 并发匹配数量 |
+| `--match-profile` | `standard` | `standard`（歌手导向）或 `classical`（作品标题导向） |
 | `--favorite` | — | 收藏夹 ID 或完整名称 |
 | `--yes` | `false` | 跳过最终写入确认 |
 | `--browser` | `auto` | `auto`、`never` 或 `always` |
@@ -98,9 +99,11 @@ music2bb convert '<playlist-url>' --top-k 5 --manual-review
 管道、CI、屏幕阅读器环境、`TERM=dumb` 或显式 `--no-tui` 会使用相同转换控制器下的文本界面。非交互式写入需要同时指定 `--favorite` 和 `--yes`；如果仍有无法自动解决的歌曲，则必须改在交互终端中逐首选择或跳过。
 新建 Bilibili 收藏夹默认仅自己可见；如需公开收藏夹，请在 `favorites create` 命令中指定 `--public`。
 
-## 平衡式匹配与审核原因
+## 匹配配置与审核原因
 
-匹配先执行包含歌手和已知别名的查询；只有尚未安全决定时才执行纯标题回退。各阶段结果按 BVID 去重后重新聚合排名。带有可靠歌手证据的候选继续按既有规则自动选择；没有歌手证据时，只有第一名标题分至少为 70、总分至少为 35，且比第二名领先至少 5 分（没有第二名时按 0 分）才会自动选择。
+每个候选的标题、歌手、音质、官方来源、热度和 UP 主分量都在 0–100 范围内，再按当前配置计算加权平均。`standard` 是默认配置，权重依次为 40、25、10、10、10、5；它先执行包含歌手和已知别名的查询，标题匹配通过且歌手分为 100 时可以提前选择，否则继续聚合纯标题回退。最终选择要求标题分至少为 70、总分至少为 35，且比第二名领先至少 5 分。
+
+`classical` 使用 55、10、10、10、10、5，更强调作品标题并允许不同演奏者或录音。它始终执行并聚合纯标题回退，不因歌手证据提前结束；最终标题分下限仍为 70，总分下限提高为 45，领先要求仍为 5 分。相近录音会以 `ambiguous` 进入审核。可通过 `--match-profile classical` 为一次转换启用，不做自动识别或持久化默认。
 
 所有未自动解决的歌曲都必须选择或跳过。公共 `MatchResult.ReviewReason` 会给出 `no_candidates`、`search_failed`、`weak_title`、`artist_unverified` 或 `ambiguous`，全屏和文本界面都会显示对应说明。`--manual` 禁止自动选择；`--manual-review` 保留推荐但要求每首歌显式确认。
 
@@ -157,9 +160,15 @@ if err != nil {
 defer engine.Close()
 
 songs, err := engine.ParsePlaylist(ctx, playlistURL, observer)
+
+custom := music2bb.MatchWeights{Title: 6, Artist: 2, Quality: 1, Official: 1}
+matches, err := engine.Match(ctx, songs, music2bb.MatchOptions{
+    Profile: music2bb.MatchProfileClassical,
+    Weights: &custom, // 相对值会被复制并按正数总和归一化
+}, observer)
 ```
 
-模块根包 `music2bb` 暴露上下文感知的登录、解析、匹配、搜索、收藏夹和浏览器操作，以及序列化观察者、类型化错误、审核原因和测试依赖注入。非公开站点协议保留在 `internal` 包中。项目的包职责和依赖方向见 [`docs/architecture.md`](docs/architecture.md)。
+模块根包 `music2bb` 暴露上下文感知的登录、解析、匹配、搜索、收藏夹和浏览器操作，以及序列化观察者、类型化错误、审核原因和测试依赖注入。`StandardMatchWeights`、`ClassicalMatchWeights` 返回内置预设；`SearchCandidatesWithOptions` 让手动搜索沿用同一配置。自定义权重接受任意非负有限相对值，但至少一项必须为正；无效配置会在远端请求前返回 `ErrorInvalidInput`。非公开站点协议保留在 `internal` 包中。项目的包职责和依赖方向见 [`docs/architecture.md`](docs/architecture.md)。
 
 ## 测试
 
