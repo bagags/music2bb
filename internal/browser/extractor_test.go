@@ -3,12 +3,14 @@ package browser
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/bagags/music2bb-go/internal/model"
 	"github.com/bagags/music2bb-go/internal/playlist"
+	"github.com/go-rod/rod"
 )
 
 func TestDecodeBrowserResultPreservesRawCandidates(t *testing.T) {
@@ -118,5 +120,63 @@ func TestExtractorWithoutManagerIsUnavailable(t *testing.T) {
 	available, err := (*Extractor)(nil).Available(context.Background())
 	if err != nil || available {
 		t.Fatalf("Available = %v, %v; want false, nil", available, err)
+	}
+}
+
+func TestNavigateWithRetryRetriesTransientAbort(t *testing.T) {
+	calls := 0
+	err := navigateWithRetry(context.Background(), func() error {
+		calls++
+		if calls == 1 {
+			return &rod.NavigationError{Reason: "net::ERR_ABORTED"}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if calls != 2 {
+		t.Fatalf("navigate calls = %d, want 2", calls)
+	}
+}
+
+func TestNavigateWithRetryDoesNotRetryOtherFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{name: "ordinary error", err: errors.New("navigation failed")},
+		{name: "other Rod navigation error", err: &rod.NavigationError{Reason: "net::ERR_NAME_NOT_RESOLVED"}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			calls := 0
+			err := navigateWithRetry(context.Background(), func() error {
+				calls++
+				return test.err
+			})
+			if !errors.Is(err, test.err) {
+				t.Fatalf("navigate error = %v, want %v", err, test.err)
+			}
+			if calls != 1 {
+				t.Fatalf("navigate calls = %d, want 1", calls)
+			}
+		})
+	}
+}
+
+func TestNavigateWithRetryHonorsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	calls := 0
+	err := navigateWithRetry(ctx, func() error {
+		calls++
+		return &rod.NavigationError{Reason: "net::ERR_ABORTED"}
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("navigate error = %v, want %v", err, context.Canceled)
+	}
+	if calls != 1 {
+		t.Fatalf("navigate calls = %d, want 1", calls)
 	}
 }

@@ -15,6 +15,8 @@ import (
 
 const mobileUserAgent = "Mozilla/5.0 (Linux; Android 12; Pixel 6) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/111.0.0.0 Mobile Safari/537.36"
 
+const navigationRetryDelay = 100 * time.Millisecond
+
 // Extractor uses only the Manager's verified executable. In particular,
 // launcher.Bin prevents Rod from silently selecting or downloading a browser.
 type Extractor struct {
@@ -129,7 +131,7 @@ func (e *Extractor) extractPlaylist(ctx context.Context, rawURL string) (playlis
 	}); err != nil {
 		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "set viewport", err)
 	}
-	if err := page.Navigate(rawURL); err != nil {
+	if err := navigateWithRetry(ctx, func() error { return page.Navigate(rawURL) }); err != nil {
 		return playlist.RawResult{}, browserOperationError(ctx, ErrorExtraction, "navigate", err)
 	}
 	if err := page.WaitLoad(); err != nil {
@@ -200,6 +202,24 @@ func browserOperationError(ctx context.Context, kind ErrorKind, operation string
 		return ctxErr
 	}
 	return &Error{Kind: kind, Op: operation, Err: err}
+}
+
+// Chromium can abort an initial CDP navigation during startup. Retry that
+// exact transient once without weakening handling for other network failures.
+func navigateWithRetry(ctx context.Context, navigate func() error) error {
+	err := navigate()
+	if !isTransientNavigationAbort(err) {
+		return err
+	}
+	if err := waitContext(ctx, navigationRetryDelay); err != nil {
+		return err
+	}
+	return navigate()
+}
+
+func isTransientNavigationAbort(err error) bool {
+	var navigationErr *rod.NavigationError
+	return errors.As(err, &navigationErr) && navigationErr.Reason == "net::ERR_ABORTED"
 }
 
 var _ playlist.BrowserExtractor = (*Extractor)(nil)
