@@ -324,6 +324,73 @@ func TestTUIResponsiveRenderSnapshots(t *testing.T) {
 	}
 }
 
+func TestTUIProgressBarAppearsAtTopForMatchingAndSearching(t *testing.T) {
+	model, cleanup := testTUIModel(t)
+	defer cleanup()
+	model.width, model.height = 80, 20
+	model.colorEnabled = false
+	model.songs = sampleSongs()
+
+	model = updateTUI(t, model, tuiPhaseMsg{phase: phaseMatch, text: "match"})
+	matching := strings.Split(model.render(), "\n")
+	if len(matching) != model.height || strings.Contains(matching[0], "music2bb") || !strings.Contains(matching[1], "music2bb") {
+		t.Fatalf("matching progress is not a top row in a fixed-height screen:\n%s", strings.Join(matching, "\n"))
+	}
+	model = updateTUI(t, model, tuiObserverMsg{event: music2bb.ProgressEvent{
+		Kind: music2bb.EventSong, Operation: "match", Current: 1,
+	}})
+	model = updateTUI(t, model, tuiProgressTickMsg{generation: model.progressGeneration})
+	if model.progressValue <= 0 || model.progressValue >= 0.5 {
+		t.Fatalf("matching progress value = %.3f, want animated progress toward 0.5", model.progressValue)
+	}
+
+	model = updateTUI(t, model, tuiMatchesMsg{outcomes: sampleOutcomes()})
+	if !model.progressVisible || !model.progressExiting || model.progressValue != 1 {
+		t.Fatalf("completed matching progress did not start its exit: %#v", model)
+	}
+	for range 100 {
+		if !model.progressVisible {
+			break
+		}
+		model = updateTUI(t, model, tuiProgressTickMsg{generation: model.progressGeneration})
+	}
+	if model.progressVisible || !strings.Contains(strings.Split(model.render(), "\n")[0], "music2bb") {
+		t.Fatalf("matching progress did not leave cleanly:\n%s", model.render())
+	}
+
+	model.songCursor = 1
+	model = pressTUI(t, model, "s")
+	model.input.SetValue("manual query")
+	model = pressTUI(t, model, "enter")
+	searching := strings.Split(model.render(), "\n")
+	if model.searchRequestID == 0 || !model.progressVisible || strings.Contains(searching[0], "music2bb") || !strings.Contains(searching[1], "music2bb") {
+		t.Fatalf("search progress is not visible at the top:\n%s", strings.Join(searching, "\n"))
+	}
+	model = pressTUI(t, model, "esc")
+	if !model.progressExiting {
+		t.Fatal("cancelled search progress disappeared without its slow exit")
+	}
+}
+
+func TestTUIProgressAnimationIsQuickInSlowOut(t *testing.T) {
+	model, cleanup := testTUIModel(t)
+	defer cleanup()
+	model.songs = []music2bb.Song{{Name: "song"}}
+	model.matchDone = 1
+	model.phase = phaseMatch
+	model.beginProgress(false)
+
+	model = updateTUI(t, model, tuiProgressTickMsg{generation: model.progressGeneration})
+	quickStep := model.progressValue
+	model.endProgress(false)
+	beforeExit := model.progressValue
+	model = updateTUI(t, model, tuiProgressTickMsg{generation: model.progressGeneration})
+	slowStep := beforeExit - model.progressValue
+	if quickStep <= slowStep || quickStep < 0.4 || slowStep > beforeExit*0.2 {
+		t.Fatalf("animation steps quick=%.3f slow=%.3f", quickStep, slowStep)
+	}
+}
+
 func TestTUISongListWrapsFullNamesAndShowsOnlySelectedArtist(t *testing.T) {
 	model, cleanup := testTUIModel(t)
 	defer cleanup()

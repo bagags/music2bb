@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"image/color"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
@@ -84,6 +86,13 @@ type tuiWriteMsg struct {
 	err    error
 }
 type tuiChannelClosedMsg struct{}
+type tuiProgressTickMsg struct{ generation uint64 }
+
+const (
+	progressTickInterval = time.Second / 30
+	progressQuickIn      = 0.45
+	progressSlowOut      = 0.12
+)
 
 type tuiController struct {
 	session *conversionSession
@@ -313,6 +322,14 @@ type tuiModel struct {
 	songCursor int
 	candCursor int
 
+	progressValue      float64
+	progressTarget     float64
+	progressVisible    bool
+	progressExiting    bool
+	progressTicking    bool
+	progressGeneration uint64
+	progressExpanded   bool
+
 	favorites        []music2bb.Favorite
 	favoriteCursor   int
 	selectedFavorite music2bb.Favorite
@@ -370,12 +387,18 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tuiChannelClosedMsg:
 		return m, nil
+	case tuiProgressTickMsg:
+		return m.updateProgress(msg)
 	case tuiPhaseMsg:
 		m.phase, m.phaseText = msg.phase, msg.text
-		return m, m.controller.waitCmd()
+		var cmd tea.Cmd
+		if msg.phase == phaseMatch {
+			cmd = m.beginProgress(false)
+		}
+		return m, tea.Batch(cmd, m.controller.waitCmd())
 	case tuiObserverMsg:
 		m.applyObserver(msg.event)
-		return m, m.controller.waitCmd()
+		return m, tea.Batch(m.animateProgress(), m.controller.waitCmd())
 	case tuiAccountMsg:
 		if msg.err != nil {
 			m.phase = phaseError
@@ -401,6 +424,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.controller.waitCmd()
 	case tuiMatchesMsg:
+		progressCmd := m.endProgress(true)
 		m.outcomes = cloneMatchResults(msg.outcomes)
 		m.ensureReviewState()
 		for index := range m.processed {
@@ -418,7 +442,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.phase = phaseReview
 		m.phaseText = "审核匹配结果"
 		m.focusFirstUnresolved()
-		return m, m.controller.waitCmd()
+		return m, tea.Batch(progressCmd, m.controller.waitCmd())
 	case tuiFavoritesMsg:
 		cmd := m.applyFavorites(msg)
 		return m, tea.Batch(cmd, m.controller.waitCmd())
@@ -427,6 +451,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.controller.waitCmd()
 		}
 		m.searchRequestID = 0
+		progressCmd := m.endProgress(false)
 		m.busy = false
 		m.overlay = overlayNone
 		m.input.Blur()
@@ -439,7 +464,7 @@ func (m tuiModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.candCursor = 0
 			m.validation = fmt.Sprintf("手动搜索返回 %d 个候选；按 Enter 接受。", len(msg.candidates))
 		}
-		return m, m.controller.waitCmd()
+		return m, tea.Batch(progressCmd, m.controller.waitCmd())
 	case tuiFavoriteCreatedMsg:
 		if msg.requestID == 0 || msg.requestID != m.favoriteRequestID {
 			return m, m.controller.waitCmd()
@@ -559,6 +584,9 @@ func (m *tuiModel) applyObserver(event music2bb.ProgressEvent) {
 	}
 	if event.Kind == music2bb.EventSong && event.Operation == "match" {
 		m.matchDone = event.Current
+		if len(m.songs) > 0 {
+			m.progressTarget = max(0, min(1, float64(event.Current)/float64(len(m.songs))))
+		}
 		if event.Song != nil {
 			for index, song := range m.songs {
 				if !m.processed[index] && song.Name == event.Song.Name && song.Artist == event.Song.Artist {
@@ -571,6 +599,95 @@ func (m *tuiModel) applyObserver(event music2bb.ProgressEvent) {
 	if event.Kind == music2bb.EventVideo && event.Operation == "add_favorite" && event.Message != "" {
 		m.writeResult.Succeeded = append(m.writeResult.Succeeded, event.Message)
 	}
+}
+
+func (m *tuiModel) beginProgress(indeterminate bool) tea.Cmd {
+	m.progressGeneration++
+	m.progressTicking = false
+	m.progressVisible = true
+	m.progressExiting = false
+	m.progressValue = 0
+	m.progressTarget = 0
+	m.progressExpanded = indeterminate
+	if indeterminate {
+		m.progressTarget = 0.82
+	} else if len(m.songs) > 0 {
+		m.progressTarget = max(0, min(1, float64(m.matchDone)/float64(len(m.songs))))
+	}
+	return m.animateProgress()
+}
+
+func (m *tuiModel) endProgress(completed bool) tea.Cmd {
+	if !m.progressVisible {
+		return nil
+	}
+	if completed {
+		m.progressValue = 1
+	} else if m.progressValue < 0.2 {
+		m.progressValue = 0.2
+	}
+	m.progressTarget = 0
+	m.progressExiting = true
+	return m.animateProgress()
+}
+
+func (m *tuiModel) animateProgress() tea.Cmd {
+	if !m.progressVisible || m.progressTicking {
+		return nil
+	}
+	activeSearch := m.searchRequestID != 0
+	activeMatch := m.phase == phaseMatch
+	if !m.progressExiting && !activeSearch && (!activeMatch || math.Abs(m.progressTarget-m.progressValue) < 0.005) {
+		return nil
+	}
+	m.progressTicking = true
+	generation := m.progressGeneration
+	return tea.Tick(progressTickInterval, func(time.Time) tea.Msg {
+		return tuiProgressTickMsg{generation: generation}
+	})
+}
+
+func (m tuiModel) updateProgress(msg tuiProgressTickMsg) (tea.Model, tea.Cmd) {
+	if msg.generation != m.progressGeneration {
+		return m, nil
+	}
+	m.progressTicking = false
+	if !m.progressVisible {
+		return m, nil
+	}
+	rate := progressQuickIn
+	if m.progressExiting {
+		rate = progressSlowOut
+	}
+	m.progressValue += (m.progressTarget - m.progressValue) * rate
+
+	if m.progressExiting {
+		if m.progressValue <= 0.01 {
+			m.progressValue = 0
+			m.progressVisible = false
+			m.progressExiting = false
+			m.progressGeneration++
+			return m, nil
+		}
+		return m, m.animateProgress()
+	}
+	if m.searchRequestID != 0 {
+		if math.Abs(m.progressTarget-m.progressValue) < 0.01 {
+			m.progressValue = m.progressTarget
+			m.progressExpanded = !m.progressExpanded
+			if m.progressExpanded {
+				m.progressTarget = 0.82
+			} else {
+				m.progressTarget = 0.18
+			}
+		}
+		return m, m.animateProgress()
+	}
+	if math.Abs(m.progressTarget-m.progressValue) < 0.005 {
+		m.progressValue = m.progressTarget
+		return m, nil
+	}
+	return m, m.animateProgress()
 }
 
 func (m *tuiModel) ensureReviewState() {
@@ -676,9 +793,11 @@ func (m *tuiModel) updateFavorite(key string) (tea.Model, tea.Cmd) {
 func (m tuiModel) updateOverlay(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	stroke := key.Keystroke()
 	if stroke == "esc" {
+		var progressCmd tea.Cmd
 		if m.overlay == overlaySearch && m.searchRequestID != 0 {
 			m.controller.cancelSearch(m.searchRequestID)
 			m.searchRequestID = 0
+			progressCmd = m.endProgress(false)
 		}
 		if m.overlay == overlayCreateFavorite && m.favoritePending {
 			m.favoriteRequestVisible = false
@@ -687,7 +806,7 @@ func (m tuiModel) updateOverlay(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.input.Blur()
 		m.manualInput.Blur()
 		m.busy = false
-		return m, nil
+		return m, progressCmd
 	}
 	switch m.overlay {
 	case overlayHelp:
@@ -706,7 +825,10 @@ func (m tuiModel) updateOverlay(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.validation = "正在手动搜索…"
 			m.nextOverlayRequest++
 			m.searchRequestID = m.nextOverlayRequest
-			return m, m.controller.searchCmd(m.searchRequestID, m.searchIndex, m.outcomes[m.searchIndex].Song, query)
+			return m, tea.Batch(
+				m.beginProgress(true),
+				m.controller.searchCmd(m.searchRequestID, m.searchIndex, m.outcomes[m.searchIndex].Song, query),
+			)
 		}
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(key)
@@ -945,7 +1067,11 @@ func (m tuiModel) render() string {
 		height = 24
 	}
 	header := m.renderHeader(width)
-	bodyHeight := height - 3
+	progressHeight := 0
+	if m.progressVisible {
+		progressHeight = 1
+	}
+	bodyHeight := height - 3 - progressHeight
 	if bodyHeight < 1 {
 		bodyHeight = 1
 	}
@@ -958,7 +1084,23 @@ func (m tuiModel) render() string {
 	}
 	status := m.renderBottomLine(m.validation, width)
 	guide := m.renderBottomLine(m.renderFooter(), width)
-	return header + "\n" + body + "\n" + status + "\n" + guide
+	content := header + "\n" + body + "\n" + status + "\n" + guide
+	if m.progressVisible {
+		content = m.renderProgress(width) + "\n" + content
+	}
+	return content
+}
+
+func (m tuiModel) renderProgress(width int) string {
+	width = maxInt(1, width)
+	filled := int(math.Round(float64(width) * max(0, min(1, m.progressValue))))
+	full, empty := strings.Repeat("━", filled), strings.Repeat("─", width-filled)
+	if !m.colorEnabled {
+		return full + empty
+	}
+	fullStyle := lipgloss.NewStyle().Foreground(m.pickColor("#276FBF", "#69A7E7"))
+	emptyStyle := lipgloss.NewStyle().Foreground(m.pickColor("#B8C5D1", "#43566A"))
+	return fullStyle.Render(full) + emptyStyle.Render(empty)
 }
 
 func (m tuiModel) renderBottomLine(text string, width int) string {
