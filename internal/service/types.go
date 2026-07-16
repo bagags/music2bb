@@ -82,6 +82,7 @@ type SearchCachePolicy string
 const (
 	SearchCacheDefault SearchCachePolicy = ""
 	SearchCacheBypass  SearchCachePolicy = "bypass"
+	SearchCacheRefresh SearchCachePolicy = "refresh"
 )
 
 type SearchStatus string
@@ -180,12 +181,27 @@ type MatchClient interface {
 	VideoDetail(ctx context.Context, bvid string) (model.Video, error)
 }
 
+type SearchResponse struct {
+	Videos        []model.Video
+	CacheHit      bool
+	RemoteRequest bool
+}
+
+type MatchClientWithSearchMetadata interface {
+	SearchVideosWithMetadata(context.Context, SearchRequest) (SearchResponse, error)
+}
+
+type AnonymousIdentityResetter interface {
+	ResetAnonymousIdentity(context.Context) error
+}
+
 type SearchRequest struct {
 	Keyword     string
 	Page        int
 	PageSize    int
 	Identity    SearchIdentity
 	CachePolicy SearchCachePolicy
+	CacheOnly   bool
 }
 
 type AccountClient interface {

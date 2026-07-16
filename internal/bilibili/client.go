@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/bagags/music2bb-go/internal/model"
 	"github.com/bagags/music2bb-go/internal/netx"
 )
 
@@ -27,15 +26,18 @@ type Client struct {
 	sleep                netx.Sleeper
 	userAgent            string
 	writeDelay           time.Duration
+	searchCache          SearchCache
 
 	fingerprintMu    sync.Mutex
 	fingerprintReady map[SearchIdentity]bool
 
-	wbiMu sync.Mutex
-	wbi   map[SearchIdentity]wbiState
+	wbiMu      sync.Mutex
+	wbi        map[SearchIdentity]wbiState
+	identityMu sync.Mutex
+	sessionMID int64
 
 	cacheMu    sync.Mutex
-	cache      map[searchKey][]model.Video
+	cache      map[searchKey]SearchCacheEntry
 	cacheOrder []searchKey
 	cacheSize  int
 	inflight   map[searchKey]*searchFlight
@@ -124,7 +126,8 @@ func New(config Config) (*Client, error) {
 		account: account, search: search, sessionSearch: sessionSearch, accountJar: accountJar, searchJar: searchJar,
 		now: now, sleep: sleep, userAgent: userAgent, writeDelay: config.WriteInterval,
 		fingerprintReady: make(map[SearchIdentity]bool), wbi: make(map[SearchIdentity]wbiState),
-		cache: make(map[searchKey][]model.Video), cacheSize: cacheSize,
+		searchCache: config.SearchCache,
+		cache:       make(map[searchKey]SearchCacheEntry), cacheSize: cacheSize,
 		inflight: make(map[searchKey]*searchFlight),
 	}, nil
 }

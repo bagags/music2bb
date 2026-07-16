@@ -71,6 +71,7 @@ type TrackCandidate struct {
 	Album             string            `json:"album"`
 	Duration          string            `json:"duration"`
 	Hash              string            `json:"hash"`
+	SourceID          string            `json:"sourceID"`
 	FilterNonSongText bool              `json:"-"`
 	MaxTitleLength    int               `json:"-"`
 }

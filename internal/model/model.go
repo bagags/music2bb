@@ -3,6 +3,8 @@
 package model
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"regexp"
 	"strings"
 )
@@ -25,6 +27,25 @@ type Song struct {
 	Album    string
 	Duration string
 	Hash     string
+	SourceID string
+}
+
+// StableSourceID returns a provider identity when available. Kugou hashes are
+// stable source identifiers; metadata-only sources use a normalized SHA-256
+// fingerprint so playlist reordering does not affect identity.
+func (s Song) StableSourceID() string {
+	if sourceID := strings.TrimSpace(s.SourceID); sourceID != "" {
+		return sourceID
+	}
+	if hash := strings.TrimSpace(s.Hash); hash != "" {
+		return "kugou:" + strings.ToUpper(hash)
+	}
+	parts := []string{s.Name, s.Artist, s.Album, s.Duration}
+	for index := range parts {
+		parts[index] = strings.ToLower(strings.Join(strings.Fields(parts[index]), " "))
+	}
+	digest := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return "metadata:" + hex.EncodeToString(digest[:])
 }
 
 // Video is a Bilibili search result or video-detail record.

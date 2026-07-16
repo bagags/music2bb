@@ -26,6 +26,11 @@ func (c *Client) Account(ctx context.Context) (Account, error) {
 		return Account{}, err
 	}
 	loggedIn := data.IsLogin || data.Name != "" || data.MID != 0
+	if data.MID > 0 {
+		c.identityMu.Lock()
+		c.sessionMID = int64(data.MID)
+		c.identityMu.Unlock()
+	}
 	return Account{MID: int64(data.MID), Name: data.Name, LoggedIn: loggedIn}, nil
 }
 
@@ -51,6 +56,9 @@ func (c *Client) Logout(ctx context.Context) error {
 	c.account.HTTP.Jar = accountJar
 	c.sessionSearch.HTTP.Jar = accountJar
 	c.resetIdentityState(SearchIdentitySession)
+	c.identityMu.Lock()
+	c.sessionMID = 0
+	c.identityMu.Unlock()
 	return nil
 }
 

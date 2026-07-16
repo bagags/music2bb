@@ -502,9 +502,13 @@ func TestMatchPreservesOrderAndSerializesObserver(t *testing.T) {
 	var inside atomic.Int32
 	var concurrent atomic.Bool
 	var eventCount atomic.Int32
+	var sawCompleteOutcome atomic.Bool
 	observer := ObserverFunc(func(event ProgressEvent) {
 		if event.Kind != EventSong {
 			return
+		}
+		if event.Match != nil && event.Match.Video != nil && event.Outcome != nil && event.Outcome.SearchStatus == SearchStatusCompleted {
+			sawCompleteOutcome.Store(true)
 		}
 		if inside.Add(1) != 1 {
 			concurrent.Store(true)
@@ -522,6 +526,9 @@ func TestMatchPreservesOrderAndSerializesObserver(t *testing.T) {
 	}
 	if eventCount.Load() != int32(len(songs)) {
 		t.Fatalf("events = %d, want %d", eventCount.Load(), len(songs))
+	}
+	if !sawCompleteOutcome.Load() {
+		t.Fatal("song progress did not preserve the selected match and complete outcome")
 	}
 	for index, result := range results {
 		if result.Song.Name != songs[index].Name || !result.HasSelection || result.Video == nil {

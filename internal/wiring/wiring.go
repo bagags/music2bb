@@ -36,6 +36,7 @@ type Options struct {
 	Now                 func() time.Time
 	Sleep               netx.Sleeper
 	CookieStore         bilibili.CookieStore
+	SearchCache         bilibili.SearchCache
 	BrowserManager      *browser.Manager
 	BrowserExtractor    playlist.BrowserExtractor
 }
@@ -137,6 +138,7 @@ func New(options Options) (*Components, error) {
 		Now:                 options.Now,
 		Sleep:               options.Sleep,
 		WriteInterval:       150 * time.Millisecond,
+		SearchCache:         firstSearchCache(options.SearchCache, state.SearchCacheDir),
 	})
 	if err != nil {
 		kugouHTTP.CloseIdleConnections()
@@ -180,6 +182,13 @@ func cloneConfig(source config.Config) config.Config {
 	source.WeightedUploaders = append([]string(nil), source.WeightedUploaders...)
 	source.Migration.Copied = append([]string(nil), source.Migration.Copied...)
 	return source
+}
+
+func firstSearchCache(cache bilibili.SearchCache, dir string) bilibili.SearchCache {
+	if cache != nil {
+		return cache
+	}
+	return bilibili.NewFileSearchCache(dir)
 }
 
 type playlistAdapter struct {
@@ -243,8 +252,20 @@ func (a *bilibiliAdapter) Logout(ctx context.Context) error {
 func (a *bilibiliAdapter) SearchVideos(ctx context.Context, request service.SearchRequest) ([]model.Video, error) {
 	return a.client.Search(ctx, request.Keyword, bilibili.SearchOptions{
 		Page: request.Page, PageSize: request.PageSize, SearchType: "video", Order: "totalrank",
-		Identity: bilibili.SearchIdentity(request.Identity), CachePolicy: bilibili.SearchCachePolicy(request.CachePolicy),
+		Identity: bilibili.SearchIdentity(request.Identity), CachePolicy: bilibili.SearchCachePolicy(request.CachePolicy), CacheOnly: request.CacheOnly,
 	})
+}
+
+func (a *bilibiliAdapter) SearchVideosWithMetadata(ctx context.Context, request service.SearchRequest) (service.SearchResponse, error) {
+	result, err := a.client.SearchWithResult(ctx, request.Keyword, bilibili.SearchOptions{
+		Page: request.Page, PageSize: request.PageSize, SearchType: "video", Order: "totalrank",
+		Identity: bilibili.SearchIdentity(request.Identity), CachePolicy: bilibili.SearchCachePolicy(request.CachePolicy), CacheOnly: request.CacheOnly,
+	})
+	return service.SearchResponse{Videos: result.Videos, CacheHit: result.CacheHit, RemoteRequest: result.RemoteRequest}, err
+}
+
+func (a *bilibiliAdapter) ResetAnonymousIdentity(ctx context.Context) error {
+	return a.client.ResetAnonymousIdentity(ctx)
 }
 
 func (a *bilibiliAdapter) VideoDetail(ctx context.Context, bvid string) (model.Video, error) {

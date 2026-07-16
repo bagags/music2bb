@@ -181,6 +181,15 @@ func TestResolveExplicitPaths(t *testing.T) {
 	if paths.MigrationMarker != filepath.Join(root, "state", migrationMarkerName) {
 		t.Errorf("marker path = %q", paths.MigrationMarker)
 	}
+	if paths.SearchCacheDir != filepath.Join(root, "cache", "search", "v1") {
+		t.Errorf("search cache path = %q", paths.SearchCacheDir)
+	}
+	if paths.ConversionsDir != filepath.Join(root, "state", "conversions", "v1") {
+		t.Errorf("conversions path = %q", paths.ConversionsDir)
+	}
+	if paths.DecisionsDir != filepath.Join(root, "state", "decisions", "v1") {
+		t.Errorf("decisions path = %q", paths.DecisionsDir)
+	}
 }
 
 func writeTestFile(t *testing.T, path, content string, mode os.FileMode) {

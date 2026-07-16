@@ -37,6 +37,7 @@ func New(cfg Config, options ...Option) (*Engine, error) {
 		HTTPTimeout:         cfg.HTTPTimeout,
 		Limiter:             resolved.limiter,
 		SearchLimiter:       resolved.searchLimiter,
+		SearchCache:         searchCacheToInternal(resolved.searchCache),
 		KugouHTTP:           resolved.http.Kugou,
 		AppleMusicHTTP:      resolved.http.AppleMusic,
 		AccountHTTP:         resolved.http.BilibiliAccount,
@@ -97,6 +98,15 @@ func (e *Engine) Close() error {
 
 func (e *Engine) Browser() *BrowserManager { return e.browser }
 
+// PersistentStatePaths returns the resolved config and cache roots used by
+// this engine. Frontends use these roots for versioned conversion state.
+func (e *Engine) PersistentStatePaths() (configDir, cacheDir string) {
+	if e == nil || e.components == nil {
+		return "", ""
+	}
+	return e.components.State.Dir, e.components.State.CacheDir
+}
+
 func (e *Engine) Login(ctx context.Context, observer Observer) (Account, error) {
 	return e.LoginWithOptions(ctx, e.loginDefaults, observer)
 }
@@ -114,6 +124,12 @@ func (e *Engine) LoginWithOptions(ctx context.Context, options LoginOptions, obs
 // state held by this engine. It does not revoke the session remotely.
 func (e *Engine) Logout(ctx context.Context) error {
 	return wrapError(e.service.Logout(ctx))
+}
+
+// ResetAnonymousIdentity clears the anonymous device cookie jar without
+// changing account cookies.
+func (e *Engine) ResetAnonymousIdentity(ctx context.Context) error {
+	return wrapError(e.service.ResetAnonymousIdentity(ctx))
 }
 
 func (e *Engine) ParsePlaylist(ctx context.Context, rawURL string, observer Observer) ([]Song, error) {
@@ -202,7 +218,7 @@ func (a browserExtractorAdapter) ExtractPlaylist(ctx context.Context, source pla
 	for index, song := range songs {
 		result.Tracks[index] = playlist.TrackCandidate{
 			Fields: map[string]string{"name": song.Name, "artist": song.Artist},
-			Album:  song.Album, Duration: song.Duration, Hash: song.Hash,
+			Album:  song.Album, Duration: song.Duration, Hash: song.Hash, SourceID: song.SourceID,
 		}
 	}
 	return result, err
@@ -253,4 +269,39 @@ func (a storageCookieAdapter) Clear() error {
 func (a storageCookieAdapter) Exists() bool {
 	state, err := a.storage.Load()
 	return err == nil && state.HasCookies
+}
+
+type searchCacheAdapter struct{ cache SearchCache }
+
+func searchCacheToInternal(cache SearchCache) bilibili.SearchCache {
+	if cache == nil {
+		return nil
+	}
+	return searchCacheAdapter{cache: cache}
+}
+
+func (a searchCacheAdapter) Get(ctx context.Context, key bilibili.SearchCacheKey) (bilibili.SearchCacheEntry, bool, error) {
+	entry, ok, err := a.cache.Get(ctx, searchCacheKeyFromInternal(key))
+	if err != nil || !ok {
+		return bilibili.SearchCacheEntry{}, ok, err
+	}
+	if entry.Key != searchCacheKeyFromInternal(key) {
+		return bilibili.SearchCacheEntry{}, false, errors.New("search cache returned a mismatched key")
+	}
+	return bilibili.SearchCacheEntry{
+		Key: key, Videos: videosToInternal(entry.Videos), StoredAt: entry.StoredAt,
+	}, true, nil
+}
+
+func (a searchCacheAdapter) Put(ctx context.Context, entry bilibili.SearchCacheEntry) error {
+	return a.cache.Put(ctx, SearchCacheEntry{
+		Key: searchCacheKeyFromInternal(entry.Key), Videos: videosFromInternal(entry.Videos), StoredAt: entry.StoredAt,
+	})
+}
+
+func searchCacheKeyFromInternal(key bilibili.SearchCacheKey) SearchCacheKey {
+	return SearchCacheKey{
+		Query: key.Query, Page: key.Page, PageSize: key.PageSize, SearchType: key.SearchType,
+		Order: key.Order, Identity: SearchIdentity(key.Identity), IdentityKey: key.IdentityKey,
+	}
 }

@@ -96,14 +96,45 @@ const (
 	SearchIdentitySession   SearchIdentity = "session"
 )
 
-// SearchCachePolicy reserves per-call cache behavior for the persistent cache
-// introduced in Phase 2. Phase 1 treats the zero value as the in-memory default.
+// SearchCachePolicy controls persistent search-cache reads and writes.
 type SearchCachePolicy string
 
 const (
 	SearchCacheDefault SearchCachePolicy = ""
 	SearchCacheBypass  SearchCachePolicy = "bypass"
+	// SearchCacheRefresh bypasses existing entries and replaces them with the
+	// successful remote response.
+	SearchCacheRefresh SearchCachePolicy = "refresh"
 )
+
+// SearchCacheKey identifies one unscored Bilibili search-result page. The
+// IdentityKey is an opaque partition chosen by the engine; callers should
+// preserve it exactly and must not derive account state from it.
+type SearchCacheKey struct {
+	Query       string
+	Page        int
+	PageSize    int
+	SearchType  string
+	Order       string
+	Identity    SearchIdentity
+	IdentityKey string
+}
+
+// SearchCacheEntry stores an unscored Video snapshot. The engine applies a
+// seven-day TTL to non-empty results and a one-hour TTL to empty results.
+type SearchCacheEntry struct {
+	Key      SearchCacheKey
+	Videos   []Video
+	StoredAt time.Time
+}
+
+// SearchCache is the injectable persistence boundary for search pages.
+// Implementations must return caller-owned entries and tolerate concurrent
+// calls from match workers.
+type SearchCache interface {
+	Get(context.Context, SearchCacheKey) (SearchCacheEntry, bool, error)
+	Put(context.Context, SearchCacheEntry) error
+}
 
 type HTTPClients struct {
 	Kugou           *http.Client
@@ -137,6 +168,7 @@ type newOptions struct {
 	clock            Clock
 	limiter          RateLimiter
 	searchLimiter    RateLimiter
+	searchCache      SearchCache
 	storage          Storage
 	browserExtractor BrowserExtractor
 }
@@ -157,6 +189,11 @@ func WithRateLimiter(limiter RateLimiter) Option {
 // and its identity-specific fingerprint/WBI setup requests.
 func WithSearchRateLimiter(limiter RateLimiter) Option {
 	return func(options *newOptions) error { options.searchLimiter = limiter; return nil }
+}
+
+// WithSearchCache replaces the default versioned filesystem search cache.
+func WithSearchCache(cache SearchCache) Option {
+	return func(options *newOptions) error { options.searchCache = cache; return nil }
 }
 
 func WithStorage(storage Storage) Option {

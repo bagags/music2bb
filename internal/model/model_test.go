@@ -105,3 +105,17 @@ func TestVideoURL(t *testing.T) {
 		t.Fatalf("URL() = %q", got)
 	}
 }
+
+func TestSongStableSourceIDUsesProviderIDsAndNormalizedMetadata(t *testing.T) {
+	if got := (Song{SourceID: "applemusic:123"}).StableSourceID(); got != "applemusic:123" {
+		t.Fatalf("explicit source ID = %q", got)
+	}
+	if got := (Song{Hash: "abCd"}).StableSourceID(); got != "kugou:ABCD" {
+		t.Fatalf("Kugou source ID = %q", got)
+	}
+	first := (Song{Name: " Song  Name ", Artist: "ARTIST", Album: " Album ", Duration: "3:05"}).StableSourceID()
+	second := (Song{Name: "song name", Artist: "artist", Album: "album", Duration: "3:05"}).StableSourceID()
+	if first != second || first == "" {
+		t.Fatalf("metadata IDs = %q and %q", first, second)
+	}
+}

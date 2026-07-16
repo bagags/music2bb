@@ -45,6 +45,9 @@ type Paths struct {
 	QualityFile         string
 	UploaderFile        string
 	MigrationMarker     string
+	SearchCacheDir      string
+	ConversionsDir      string
+	DecisionsDir        string
 }
 
 // MigrationResult reports what happened during the one-time legacy import.
@@ -96,6 +99,9 @@ func Resolve(options Options) (Paths, error) {
 		QualityFile:         filepath.Join(dir, "w.txt"),
 		UploaderFile:        filepath.Join(dir, "w-up.txt"),
 		MigrationMarker:     filepath.Join(dir, migrationMarkerName),
+		SearchCacheDir:      filepath.Join(cacheDir, "search", "v1"),
+		ConversionsDir:      filepath.Join(dir, "conversions", "v1"),
+		DecisionsDir:        filepath.Join(dir, "decisions", "v1"),
 	}, nil
 }
 

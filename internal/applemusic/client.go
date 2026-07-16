@@ -191,9 +191,18 @@ func extractSerializedPlaylist(pageHTML []byte, sourceURL *url.URL) (playlist.Ra
 			},
 			Album:    album,
 			Duration: formatDurationMillis(item.Duration),
+			SourceID: appleMusicSourceID(item.ContentDescriptor.Identifiers.StoreAdamID),
 		})
 	}
 	return playlist.RawResult{Tracks: tracks, ExpectedTotal: expectedTotal}, nil
+}
+
+func appleMusicSourceID(storeAdamID string) string {
+	storeAdamID = strings.TrimSpace(storeAdamID)
+	if storeAdamID == "" {
+		return ""
+	}
+	return "applemusic:" + storeAdamID
 }
 
 func serializedServerData(pageHTML []byte) ([]byte, error) {

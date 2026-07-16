@@ -64,6 +64,19 @@ func TestExtractPlaylistFallsBackToRawTrackItemCount(t *testing.T) {
 	}
 }
 
+func TestExtractPlaylistUsesStoreAdamIDAsStableSourceIdentity(t *testing.T) {
+	pageHTML := applePage("pl.identity", 1, `
+		{"title":"Song","artistName":"Artist","contentDescriptor":{"kind":"song","identifiers":{"storeAdamID":"123456"}}}`)
+	result, err := extractSerializedPlaylist([]byte(pageHTML), mustURL(t, "https://music.apple.com/us/playlist/identity/pl.identity"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	songs := playlist.DecodeTracks(result.Tracks, nil)
+	if len(songs) != 1 || songs[0].SourceID != "applemusic:123456" {
+		t.Fatalf("songs = %#v", songs)
+	}
+}
+
 func TestExtractPlaylistRejectsMissingMalformedAndMismatchedState(t *testing.T) {
 	tests := []struct {
 		name string

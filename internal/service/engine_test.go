@@ -143,6 +143,35 @@ type scriptedSearch struct {
 	errs     map[string]error
 }
 
+type metadataSearch struct {
+	mu       sync.Mutex
+	requests []SearchRequest
+	hits     map[int]bool
+}
+
+func (s *metadataSearch) SearchVideos(_ context.Context, request SearchRequest) ([]model.Video, error) {
+	response, err := s.SearchVideosWithMetadata(context.Background(), request)
+	return response.Videos, err
+}
+
+func (s *metadataSearch) SearchVideosWithMetadata(_ context.Context, request SearchRequest) (SearchResponse, error) {
+	s.mu.Lock()
+	s.requests = append(s.requests, request)
+	s.mu.Unlock()
+	if request.CacheOnly && !s.hits[request.Page] {
+		return SearchResponse{}, searchCacheMissError{}
+	}
+	return SearchResponse{
+		Videos:        []model.Video{{BVID: fmt.Sprintf("BV%d", request.Page), Title: fmt.Sprintf("result %d", request.Page)}},
+		CacheHit:      s.hits[request.Page],
+		RemoteRequest: !s.hits[request.Page],
+	}, nil
+}
+
+func (*metadataSearch) VideoDetail(context.Context, string) (model.Video, error) {
+	return model.Video{}, nil
+}
+
 type ambiguityStrategy struct{}
 
 func (ambiguityStrategy) QueryPhases(model.Song) []QueryPhase {
@@ -166,6 +195,28 @@ func (ambiguityStrategy) Decide(_ model.Song, ranked []model.MatchResult, _ bool
 		return MatchDecision{SelectedIndex: -1, ReviewReason: model.ReviewAmbiguous}
 	}
 	return MatchDecision{SelectedIndex: 0}
+}
+
+type finalOnlyStrategy struct{}
+
+func (finalOnlyStrategy) QueryPhases(model.Song) []QueryPhase {
+	return []QueryPhase{{Queries: []string{"query"}}}
+}
+
+func (finalOnlyStrategy) Rank(song model.Song, videos []model.Video, limit int) []model.MatchResult {
+	results := make([]model.MatchResult, 0, len(videos))
+	for index := range videos {
+		video := videos[index]
+		results = append(results, model.MatchResult{Song: song, Video: &video, Score: 10})
+	}
+	return results
+}
+
+func (finalOnlyStrategy) Decide(_ model.Song, ranked []model.MatchResult, final bool) MatchDecision {
+	if final && len(ranked) > 0 {
+		return MatchDecision{SelectedIndex: 0}
+	}
+	return MatchDecision{SelectedIndex: -1, Continue: true, ReviewReason: model.ReviewAmbiguous}
 }
 
 type burstSearch struct {
@@ -406,6 +457,50 @@ func TestMatchUsesPageWidthOrderAndPerSongBudget(t *testing.T) {
 	}
 	if !reflect.DeepEqual(search.requests, want) {
 		t.Fatalf("requests = %#v, want %#v", search.requests, want)
+	}
+}
+
+func TestMatchCacheHitsDoNotConsumePerRunBudget(t *testing.T) {
+	search := &metadataSearch{hits: map[int]bool{1: true, 2: true}}
+	engine, err := New(Dependencies{
+		Playlist: fakePlaylist{}, Match: search, Account: &fakeRemote{}, Strategy: finalOnlyStrategy{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err := engine.Match(context.Background(), []model.Song{{Name: "song"}}, MatchOptions{
+		SearchPages: 3, SearchBudget: 1, Workers: 1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 || outcomes[0].CacheHits != 2 || outcomes[0].RemoteRequests != 1 {
+		t.Fatalf("outcome = %#v", outcomes)
+	}
+	if len(search.requests) != 3 {
+		t.Fatalf("requests = %#v, want cached pages plus one missing page", search.requests)
+	}
+}
+
+func TestMatchStillUsesCachedPagesAfterRemoteBudgetIsExhausted(t *testing.T) {
+	search := &metadataSearch{hits: map[int]bool{2: true}}
+	engine, err := New(Dependencies{
+		Playlist: fakePlaylist{}, Match: search, Account: &fakeRemote{}, Strategy: finalOnlyStrategy{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcomes, err := engine.Match(context.Background(), []model.Song{{Name: "song"}}, MatchOptions{
+		SearchPages: 3, SearchBudget: 1, Workers: 1,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 1 || outcomes[0].RemoteRequests != 1 || outcomes[0].CacheHits != 1 {
+		t.Fatalf("outcome = %#v", outcomes)
+	}
+	if len(search.requests) != 3 || !search.requests[1].CacheOnly || !search.requests[2].CacheOnly {
+		t.Fatalf("requests = %#v", search.requests)
 	}
 }
 

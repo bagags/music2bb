@@ -102,6 +102,9 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 	if opts.SearchIdentity != SearchIdentityAnonymous && opts.SearchIdentity != SearchIdentitySession {
 		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "match", Message: fmt.Sprintf("unknown search identity %q", opts.SearchIdentity)}
 	}
+	if opts.SearchCachePolicy != SearchCacheDefault && opts.SearchCachePolicy != SearchCacheBypass && opts.SearchCachePolicy != SearchCacheRefresh {
+		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "match", Message: fmt.Sprintf("unknown search cache policy %q", opts.SearchCachePolicy)}
+	}
 	if opts.Workers > len(songs) {
 		opts.Workers = len(songs)
 	}
@@ -134,7 +137,7 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 				}
 				progressMu.Lock()
 				completed++
-				event := ProgressEvent{Kind: EventSong, Operation: "match", Current: completed, Total: len(songs), Song: &outcomes[index].Song}
+				event := ProgressEvent{Kind: EventSong, Operation: "match", Current: completed, Total: len(songs), Song: &outcomes[index].Song, Outcome: &outcomes[index]}
 				if outcome.HasSelection {
 					event.Match = &outcomes[index].Selected
 				}
@@ -192,16 +195,26 @@ func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song mod
 	allVideos := make([]model.Video, 0)
 	seenVideos := make(map[string]struct{})
 	var lastSearchErr error
-	totalPlanned := len(queries) * opts.SearchPages
-	for page := 1; page <= opts.SearchPages && outcome.RemoteRequests < opts.SearchBudget; page++ {
+	budgetLimited := false
+	for page := 1; page <= opts.SearchPages; page++ {
 		for _, query := range queries {
-			if outcome.RemoteRequests >= opts.SearchBudget {
+			cacheOnly := outcome.RemoteRequests >= opts.SearchBudget
+			if cacheOnly && opts.SearchCachePolicy != SearchCacheDefault {
+				budgetLimited = true
 				break
 			}
-			outcome.RemoteRequests++
-			pageVideos, err := e.match.SearchVideos(ctx, SearchRequest{
-				Keyword: query, Page: page, PageSize: 20, Identity: opts.SearchIdentity, CachePolicy: opts.SearchCachePolicy,
+			response, err := e.searchVideos(ctx, SearchRequest{
+				Keyword: query, Page: page, PageSize: 20, Identity: opts.SearchIdentity, CachePolicy: opts.SearchCachePolicy, CacheOnly: cacheOnly,
 			})
+			if isSearchCacheMiss(err) {
+				budgetLimited = true
+				continue
+			}
+			if response.CacheHit {
+				outcome.CacheHits++
+			} else if response.RemoteRequest {
+				outcome.RemoteRequests++
+			}
 			if err != nil {
 				lastSearchErr = err
 				if reason := riskControlReason(err); reason != "" {
@@ -234,6 +247,7 @@ func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song mod
 				}
 				continue
 			}
+			pageVideos := response.Videos
 			for _, video := range pageVideos {
 				key := video.BVID
 				if key == "" {
@@ -275,7 +289,7 @@ func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song mod
 		outcome.Failure = &ItemFailure{Operation: "search", Item: song.Name, Reason: lastSearchErr.Error()}
 		outcome.ReviewReason = model.ReviewSearchFailed
 		outcome.SearchStatus = SearchStatusFailed
-	} else if outcome.RemoteRequests >= opts.SearchBudget && opts.SearchBudget < totalPlanned {
+	} else if budgetLimited {
 		outcome.ReviewReason = model.ReviewBudgetExhausted
 		outcome.SearchStatus = SearchStatusBudgetExhausted
 	} else if len(outcome.Candidates) == 0 {
@@ -355,7 +369,10 @@ func (e *Engine) SearchCandidatesWithOptions(ctx context.Context, song model.Son
 	if options.SearchIdentity != SearchIdentityAnonymous && options.SearchIdentity != SearchIdentitySession {
 		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "search", Message: fmt.Sprintf("unknown search identity %q", options.SearchIdentity)}
 	}
-	videos, err := e.match.SearchVideos(ctx, SearchRequest{
+	if options.SearchCachePolicy != SearchCacheDefault && options.SearchCachePolicy != SearchCacheBypass && options.SearchCachePolicy != SearchCacheRefresh {
+		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "search", Message: fmt.Sprintf("unknown search cache policy %q", options.SearchCachePolicy)}
+	}
+	response, err := e.searchVideos(ctx, SearchRequest{
 		Keyword: query, Page: 1, PageSize: options.Limit, Identity: options.SearchIdentity, CachePolicy: options.SearchCachePolicy,
 	})
 	if err != nil {
@@ -364,7 +381,37 @@ func (e *Engine) SearchCandidatesWithOptions(ctx context.Context, song model.Son
 			RiskReason: riskControlReason(err), SearchIdentity: options.SearchIdentity,
 		}
 	}
-	return strategy.Rank(song, videos, len(videos)), nil
+	return strategy.Rank(song, response.Videos, len(response.Videos)), nil
+}
+
+func (e *Engine) searchVideos(ctx context.Context, request SearchRequest) (SearchResponse, error) {
+	if client, ok := e.match.(MatchClientWithSearchMetadata); ok {
+		return client.SearchVideosWithMetadata(ctx, request)
+	}
+	if request.CacheOnly {
+		return SearchResponse{}, searchCacheMissError{}
+	}
+	videos, err := e.match.SearchVideos(ctx, request)
+	return SearchResponse{Videos: videos, RemoteRequest: true}, err
+}
+
+type searchCacheMissError struct{}
+
+func (searchCacheMissError) Error() string         { return "search cache miss" }
+func (searchCacheMissError) SearchCacheMiss() bool { return true }
+
+func isSearchCacheMiss(err error) bool {
+	type cacheMiss interface{ SearchCacheMiss() bool }
+	var miss cacheMiss
+	return errors.As(err, &miss) && miss.SearchCacheMiss()
+}
+
+func (e *Engine) ResetAnonymousIdentity(ctx context.Context) error {
+	resetter, ok := e.match.(AnonymousIdentityResetter)
+	if !ok {
+		return &OperationError{Category: ErrorInternal, Operation: "reset anonymous identity", Message: "match client does not support anonymous identity reset"}
+	}
+	return classifyContext("reset anonymous identity", ErrorInternal, resetter.ResetAnonymousIdentity(ctx))
 }
 
 func (e *Engine) resolveMatchStrategy(operation string, profile MatchProfile, weights *MatchWeights) (MatchStrategy, error) {

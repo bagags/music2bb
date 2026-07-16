@@ -10,10 +10,16 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/bagags/music2bb-go/internal/model"
 	"github.com/bagags/music2bb-go/internal/netx"
 )
 
 var ErrNoCookieFile = errors.New("bilibili: cookie file does not exist")
+
+type SearchCacheMissError struct{}
+
+func (SearchCacheMissError) Error() string         { return "bilibili: search cache miss" }
+func (SearchCacheMissError) SearchCacheMiss() bool { return true }
 
 type Endpoints struct {
 	Home                 string
@@ -100,6 +106,7 @@ type Config struct {
 	Timeout             time.Duration
 	MaxAttempts         int
 	CacheSize           int
+	SearchCache         SearchCache
 	Now                 func() time.Time
 	Sleep               netx.Sleeper
 	UserAgent           string
@@ -161,6 +168,7 @@ type SearchOptions struct {
 	Order       string
 	Identity    SearchIdentity
 	CachePolicy SearchCachePolicy
+	CacheOnly   bool
 }
 
 type SearchIdentity string
@@ -175,7 +183,35 @@ type SearchCachePolicy string
 const (
 	SearchCacheDefault SearchCachePolicy = ""
 	SearchCacheBypass  SearchCachePolicy = "bypass"
+	SearchCacheRefresh SearchCachePolicy = "refresh"
 )
+
+type SearchCacheKey struct {
+	Query       string         `json:"query"`
+	Page        int            `json:"page"`
+	PageSize    int            `json:"pageSize"`
+	SearchType  string         `json:"searchType"`
+	Order       string         `json:"order"`
+	Identity    SearchIdentity `json:"identity"`
+	IdentityKey string         `json:"identityKey"`
+}
+
+type SearchCacheEntry struct {
+	Key      SearchCacheKey `json:"key"`
+	Videos   []model.Video  `json:"videos"`
+	StoredAt time.Time      `json:"storedAt"`
+}
+
+type SearchCache interface {
+	Get(context.Context, SearchCacheKey) (SearchCacheEntry, bool, error)
+	Put(context.Context, SearchCacheEntry) error
+}
+
+type SearchResult struct {
+	Videos        []model.Video
+	CacheHit      bool
+	RemoteRequest bool
+}
 
 type RiskControlReason string
 

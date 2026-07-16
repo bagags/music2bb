@@ -6,11 +6,11 @@ import (
 )
 
 func songFromInternal(song model.Song) Song {
-	return Song{Name: song.Name, Artist: song.Artist, Album: song.Album, Duration: song.Duration, Hash: song.Hash}
+	return Song{Name: song.Name, Artist: song.Artist, Album: song.Album, Duration: song.Duration, Hash: song.Hash, SourceID: song.SourceID}
 }
 
 func songToInternal(song Song) model.Song {
-	return model.Song{Name: song.Name, Artist: song.Artist, Album: song.Album, Duration: song.Duration, Hash: song.Hash}
+	return model.Song{Name: song.Name, Artist: song.Artist, Album: song.Album, Duration: song.Duration, Hash: song.Hash, SourceID: song.SourceID}
 }
 
 func songsFromInternal(songs []model.Song) []Song {
@@ -45,6 +45,22 @@ func videoToInternal(video Video) model.Video {
 		DanmakuCount: video.DanmakuCount, Description: video.Description,
 		Tags: append([]string(nil), video.Tags...), IsOfficial: video.IsOfficial, IsVerified: video.IsVerified,
 	}
+}
+
+func videosFromInternal(videos []model.Video) []Video {
+	result := make([]Video, len(videos))
+	for index, video := range videos {
+		result[index] = videoFromInternal(video)
+	}
+	return result
+}
+
+func videosToInternal(videos []Video) []model.Video {
+	result := make([]model.Video, len(videos))
+	for index, video := range videos {
+		result[index] = videoToInternal(video)
+	}
+	return result
 }
 
 func candidateFromInternal(match model.MatchResult) MatchResult {
@@ -168,6 +184,10 @@ func observerAdapter(observer Observer) service.Observer {
 		if event.Match != nil {
 			match := candidateFromInternal(*event.Match)
 			converted.Match = &match
+		}
+		if event.Outcome != nil {
+			match := outcomesFromInternal([]service.MatchOutcome{*event.Outcome})[0]
+			converted.Outcome = &match
 		}
 		observer.Observe(converted)
 	})

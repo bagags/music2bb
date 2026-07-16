@@ -25,6 +25,7 @@ type ProgressEvent struct {
 	Total     int
 	Song      *model.Song
 	Match     *model.MatchResult
+	Outcome   *MatchOutcome
 	QRPayload string
 	At        time.Time
 }

@@ -8,23 +8,31 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/bagags/music2bb-go/internal/model"
 )
 
 type searchKey struct {
-	Query      string
-	Page       int
-	PageSize   int
-	SearchType string
-	Order      string
-	Identity   SearchIdentity
+	Query       string
+	Page        int
+	PageSize    int
+	SearchType  string
+	Order       string
+	Identity    SearchIdentity
+	IdentityKey string
 }
 
 type searchFlight struct {
-	done chan struct{}
-	err  error
+	done   chan struct{}
+	result SearchResult
+	err    error
 }
+
+const (
+	positiveSearchCacheTTL = 7 * 24 * time.Hour
+	negativeSearchCacheTTL = time.Hour
+)
 
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
@@ -56,12 +64,19 @@ type searchVideo struct {
 }
 
 func (c *Client) Search(ctx context.Context, query string, options SearchOptions) ([]model.Video, error) {
+	result, err := c.SearchWithResult(ctx, query, options)
+	return result.Videos, err
+}
+
+// SearchWithResult returns cache metadata in addition to the caller-owned
+// unscored video snapshot.
+func (c *Client) SearchWithResult(ctx context.Context, query string, options SearchOptions) (SearchResult, error) {
 	if err := ctx.Err(); err != nil {
-		return nil, err
+		return SearchResult{}, err
 	}
 	query = strings.TrimSpace(query)
 	if query == "" {
-		return nil, &APIError{Operation: "search", Message: "empty query"}
+		return SearchResult{}, &APIError{Operation: "search", Message: "empty query"}
 	}
 	if options.Page <= 0 {
 		options.Page = 1
@@ -79,16 +94,49 @@ func (c *Client) Search(ctx context.Context, query string, options SearchOptions
 		options.Identity = SearchIdentityAnonymous
 	}
 	if options.Identity != SearchIdentityAnonymous && options.Identity != SearchIdentitySession {
-		return nil, &APIError{Operation: "search", Message: "unknown search identity " + string(options.Identity)}
+		return SearchResult{}, &APIError{Operation: "search", Message: "unknown search identity " + string(options.Identity)}
 	}
-	key := searchKey{Query: query, Page: options.Page, PageSize: options.PageSize, SearchType: options.SearchType, Order: options.Order, Identity: options.Identity}
-	if options.CachePolicy != SearchCacheBypass {
+	if options.CachePolicy != SearchCacheDefault && options.CachePolicy != SearchCacheBypass && options.CachePolicy != SearchCacheRefresh {
+		return SearchResult{}, &APIError{Operation: "search", Message: "unknown search cache policy " + string(options.CachePolicy)}
+	}
+	key := searchKey{
+		Query: query, Page: options.Page, PageSize: options.PageSize,
+		SearchType: options.SearchType, Order: options.Order, Identity: options.Identity,
+		IdentityKey: c.searchIdentityKey(options.Identity),
+	}
+	if options.Identity == SearchIdentityAnonymous && key.IdentityKey == "" && !options.CacheOnly {
+		if err := c.ensureFingerprint(ctx, options.Identity); err != nil {
+			return SearchResult{}, err
+		}
+		key.IdentityKey = c.searchIdentityKey(options.Identity)
+	}
+	if options.CachePolicy == SearchCacheDefault {
 		if videos, ok := c.cached(key); ok {
-			return videos, nil
+			return SearchResult{Videos: videos, CacheHit: true}, nil
+		}
+		if key.IdentityKey != "" && c.searchCache != nil {
+			entry, ok, err := c.searchCache.Get(ctx, key.cacheKey())
+			if err != nil {
+				return SearchResult{}, &APIError{Operation: "search cache", Err: err}
+			}
+			if ok && searchCacheEntryFresh(entry, c.now()) {
+				c.cacheMu.Lock()
+				c.putCachedLocked(key, entry)
+				c.cacheMu.Unlock()
+				return SearchResult{Videos: cloneVideos(entry.Videos), CacheHit: true}, nil
+			}
 		}
 	}
-	if options.CachePolicy == SearchCacheBypass {
-		return c.searchUncached(ctx, query, options)
+	if options.CacheOnly {
+		return SearchResult{}, SearchCacheMissError{}
+	}
+	if options.CachePolicy == SearchCacheBypass || options.CachePolicy == SearchCacheRefresh {
+		videos, err := c.searchUncached(ctx, query, options)
+		result := SearchResult{Videos: cloneVideos(videos), RemoteRequest: true}
+		if err == nil && options.CachePolicy == SearchCacheRefresh {
+			c.storeSearchResult(ctx, key, videos)
+		}
+		return result, err
 	}
 
 	c.cacheMu.Lock()
@@ -96,13 +144,12 @@ func (c *Client) Search(ctx context.Context, query string, options SearchOptions
 		c.cacheMu.Unlock()
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return SearchResult{}, ctx.Err()
 		case <-flight.done:
 			if flight.err != nil {
-				return nil, flight.err
+				return SearchResult{}, flight.err
 			}
-			videos, _ := c.cached(key)
-			return videos, nil
+			return SearchResult{Videos: cloneVideos(flight.result.Videos), CacheHit: true}, nil
 		}
 	}
 	flight := &searchFlight{done: make(chan struct{})}
@@ -110,15 +157,19 @@ func (c *Client) Search(ctx context.Context, query string, options SearchOptions
 	c.cacheMu.Unlock()
 
 	videos, err := c.searchUncached(ctx, query, options)
-	c.cacheMu.Lock()
+	result := SearchResult{Videos: cloneVideos(videos), RemoteRequest: true}
 	if err == nil {
-		c.putCachedLocked(key, videos)
+		c.storeSearchResult(ctx, key, videos)
+	}
+	c.cacheMu.Lock()
+	flight.result = SearchResult{
+		Videos: cloneVideos(result.Videos), RemoteRequest: result.RemoteRequest,
 	}
 	flight.err = err
 	delete(c.inflight, key)
 	close(flight.done)
 	c.cacheMu.Unlock()
-	return cloneVideos(videos), err
+	return result, err
 }
 
 func (c *Client) searchUncached(ctx context.Context, query string, options SearchOptions) ([]model.Video, error) {
@@ -196,20 +247,70 @@ func splitTags(value string) []string {
 func (c *Client) cached(key searchKey) ([]model.Video, bool) {
 	c.cacheMu.Lock()
 	defer c.cacheMu.Unlock()
-	videos, ok := c.cache[key]
-	return cloneVideos(videos), ok
+	entry, ok := c.cache[key]
+	if !ok || !searchCacheEntryFresh(entry, c.now()) {
+		if ok {
+			c.removeCachedLocked(key)
+		}
+		return nil, false
+	}
+	return cloneVideos(entry.Videos), true
 }
 
-func (c *Client) putCachedLocked(key searchKey, videos []model.Video) {
+func (c *Client) putCachedLocked(key searchKey, entry SearchCacheEntry) {
 	if _, exists := c.cache[key]; !exists {
 		c.cacheOrder = append(c.cacheOrder, key)
 	}
-	c.cache[key] = cloneVideos(videos)
+	c.cache[key] = cloneSearchCacheEntry(entry)
 	for len(c.cacheOrder) > c.cacheSize {
 		oldest := c.cacheOrder[0]
 		c.cacheOrder = c.cacheOrder[1:]
 		delete(c.cache, oldest)
 	}
+}
+
+func (c *Client) removeCachedLocked(key searchKey) {
+	delete(c.cache, key)
+	for index, candidate := range c.cacheOrder {
+		if candidate == key {
+			c.cacheOrder = append(c.cacheOrder[:index], c.cacheOrder[index+1:]...)
+			break
+		}
+	}
+}
+
+func (c *Client) storeSearchResult(ctx context.Context, initialKey searchKey, videos []model.Video) {
+	key := initialKey
+	key.IdentityKey = c.searchIdentityKey(key.Identity)
+	if key.IdentityKey == "" {
+		return
+	}
+	entry := SearchCacheEntry{Key: key.cacheKey(), Videos: cloneVideos(videos), StoredAt: c.now()}
+	c.cacheMu.Lock()
+	c.putCachedLocked(key, entry)
+	c.cacheMu.Unlock()
+	if c.searchCache != nil {
+		_ = c.searchCache.Put(ctx, entry)
+	}
+}
+
+func (key searchKey) cacheKey() SearchCacheKey {
+	return SearchCacheKey{
+		Query: key.Query, Page: key.Page, PageSize: key.PageSize,
+		SearchType: key.SearchType, Order: key.Order, Identity: key.Identity, IdentityKey: key.IdentityKey,
+	}
+}
+
+func searchCacheEntryFresh(entry SearchCacheEntry, now time.Time) bool {
+	if entry.StoredAt.IsZero() {
+		return false
+	}
+	ttl := positiveSearchCacheTTL
+	if len(entry.Videos) == 0 {
+		ttl = negativeSearchCacheTTL
+	}
+	age := now.Sub(entry.StoredAt)
+	return age < ttl
 }
 
 func cloneVideos(videos []model.Video) []model.Video {

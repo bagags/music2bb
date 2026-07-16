@@ -8,6 +8,9 @@ type Song struct {
 	Album    string
 	Duration string
 	Hash     string
+	// SourceID is stable across playlist ordering and is used for checkpoint
+	// alignment and cross-playlist manual decisions.
+	SourceID string
 }
 
 func (s Song) SearchKeyword() string { return songToInternal(s).SearchKeyword() }
@@ -17,6 +20,10 @@ func (s Song) SearchKeywordFull() string { return songToInternal(s).SearchKeywor
 func (s Song) AllSearchKeywords() []string {
 	return append([]string(nil), songToInternal(s).AllSearchKeywords()...)
 }
+
+// StableSourceID returns SourceID or a deterministic source metadata
+// fingerprint when a provider did not expose a native track identifier.
+func (s Song) StableSourceID() string { return songToInternal(s).StableSourceID() }
 
 type Video struct {
 	BVID          string
@@ -154,6 +161,9 @@ type ProgressEvent struct {
 	Total     int
 	Song      *Song
 	Match     *MatchResult
+	// Outcome contains the complete per-song match state for EventSong. Match
+	// remains the selected candidate for compatibility with existing observers.
+	Outcome   *MatchResult
 	QRPayload string
 	At        time.Time
 }

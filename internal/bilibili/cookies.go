@@ -135,6 +135,7 @@ func (c *Client) LoadCookies() (bool, error) {
 		return false, err
 	}
 	c.accountJar.load(records, home)
+	c.setSessionMIDFromCookies(records)
 	c.resetIdentityState(SearchIdentitySession)
 	return true, nil
 }

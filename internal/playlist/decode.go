@@ -209,6 +209,7 @@ func DecodeTracks(candidates []TrackCandidate, titleExtractors []TitleExtractor)
 		songs = append(songs, model.Song{
 			Name: title.Name, Artist: title.Artist,
 			Album: strings.TrimSpace(candidate.Album), Duration: strings.TrimSpace(candidate.Duration), Hash: strings.TrimSpace(candidate.Hash),
+			SourceID: strings.TrimSpace(candidate.SourceID),
 		})
 	}
 	return songs
