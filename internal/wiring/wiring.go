@@ -220,6 +220,10 @@ func (a *bilibiliAdapter) Login(ctx context.Context, options service.LoginOption
 	return service.Account{ID: account.MID, Name: account.Name}, nil
 }
 
+func (a *bilibiliAdapter) Logout(ctx context.Context) error {
+	return a.client.Logout(ctx)
+}
+
 func (a *bilibiliAdapter) SearchVideos(ctx context.Context, query string, page, pageSize int) ([]model.Video, error) {
 	return a.client.Search(ctx, query, bilibili.SearchOptions{Page: page, PageSize: pageSize, SearchType: "video", Order: "totalrank"})
 }

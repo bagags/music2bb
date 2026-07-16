@@ -108,6 +108,12 @@ func (e *Engine) LoginWithOptions(ctx context.Context, options LoginOptions, obs
 	return Account{ID: account.ID, Name: account.Name}, wrapError(err)
 }
 
+// Logout clears the locally persisted Bilibili login and the authentication
+// state held by this engine. It does not revoke the session remotely.
+func (e *Engine) Logout(ctx context.Context) error {
+	return wrapError(e.service.Logout(ctx))
+}
+
 func (e *Engine) ParsePlaylist(ctx context.Context, rawURL string, observer Observer) ([]Song, error) {
 	return e.ParsePlaylistWithOptions(ctx, rawURL, e.parseDefaults, observer)
 }
@@ -225,6 +231,16 @@ func (a storageCookieAdapter) Save(records []bilibili.CookieRecord) error {
 	for index, record := range records {
 		state.Cookies[index] = Cookie{Name: record.Name, Value: record.Value, Domain: record.Domain, Path: record.Path}
 	}
+	return a.storage.Save(state)
+}
+
+func (a storageCookieAdapter) Clear() error {
+	state, err := a.storage.Load()
+	if err != nil && !errors.Is(err, bilibili.ErrNoCookieFile) {
+		return err
+	}
+	state.HasCookies = false
+	state.Cookies = nil
 	return a.storage.Save(state)
 }
 

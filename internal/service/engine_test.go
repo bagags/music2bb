@@ -61,6 +61,8 @@ func (f *fakeRemote) Login(context.Context, LoginOptions, func(LoginUpdate)) (Ac
 	return Account{ID: 1, Name: "tester"}, nil
 }
 
+func (f *fakeRemote) Logout(context.Context) error { return nil }
+
 func (f *fakeRemote) ListFavorites(context.Context) ([]model.Favorite, error) {
 	return []model.Favorite{{ID: 1, Title: "test"}}, nil
 }

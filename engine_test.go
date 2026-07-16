@@ -79,6 +79,32 @@ func testStorage() *memoryStorage {
 	}}
 }
 
+func TestLogoutClearsStoredCookiesAndPreservesConfiguration(t *testing.T) {
+	storage := testStorage()
+	root := t.TempDir()
+	engine, err := New(Config{ConfigDir: root + "/config", CacheDir: root + "/cache"}, WithStorage(storage))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+
+	if err := engine.Logout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	state, err := storage.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.HasCookies || len(state.Cookies) != 0 {
+		t.Fatalf("cookies were not cleared: %#v", state.Cookies)
+	}
+	if !reflect.DeepEqual(state.BlockKeywords, []string{"cover"}) ||
+		!reflect.DeepEqual(state.QualityKeywords, []string{"official"}) ||
+		!reflect.DeepEqual(state.WeightedUploaders, []string{"trusted"}) {
+		t.Fatalf("configuration changed during logout: %#v", state)
+	}
+}
+
 func newTestEngine(t *testing.T, searchTransport http.RoundTripper, options ...Option) *Engine {
 	t.Helper()
 	accountCalls := atomic.Int32{}

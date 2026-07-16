@@ -16,6 +16,7 @@ import (
 
 type Backend interface {
 	LoginWithOptions(context.Context, music2bb.LoginOptions, music2bb.Observer) (music2bb.Account, error)
+	Logout(context.Context) error
 	ParsePlaylistWithOptions(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error)
 	Match(context.Context, []music2bb.Song, music2bb.MatchOptions, music2bb.Observer) ([]music2bb.MatchResult, error)
 	SearchCandidatesWithOptions(context.Context, music2bb.Song, string, music2bb.CandidateSearchOptions) ([]music2bb.MatchResult, error)
@@ -59,6 +60,8 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		return a.runConvert(ctx, commandArgs)
 	case "login":
 		return a.runLogin(ctx, commandArgs)
+	case "logout":
+		return a.runLogout(ctx, commandArgs)
 	case "favorites":
 		return a.runFavorites(ctx, commandArgs)
 	case "browser":
@@ -100,6 +103,7 @@ func (a *App) printHelp() {
 用法:
   music2bb convert <playlist-url> [options]
   music2bb login [--no-qr-login]
+  music2bb logout
   music2bb favorites list
   music2bb favorites create <name> [--intro TEXT] [--public]
   music2bb browser install|status|clear

@@ -11,22 +11,29 @@ import (
 )
 
 type fakeBackend struct {
-	loginOpts  music2bb.LoginOptions
-	matchOpts  music2bb.MatchOptions
-	searchOpts music2bb.CandidateSearchOptions
-	parseOpts  []music2bb.ParseOptions
-	parse      func(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error)
-	created    music2bb.CreateFavoriteRequest
-	match      []music2bb.MatchResult
-	addedTo    int64
-	loginErr   error
-	loginCalls int
+	loginOpts   music2bb.LoginOptions
+	matchOpts   music2bb.MatchOptions
+	searchOpts  music2bb.CandidateSearchOptions
+	parseOpts   []music2bb.ParseOptions
+	parse       func(context.Context, string, music2bb.ParseOptions, music2bb.Observer) ([]music2bb.Song, error)
+	created     music2bb.CreateFavoriteRequest
+	match       []music2bb.MatchResult
+	addedTo     int64
+	loginErr    error
+	loginCalls  int
+	logoutErr   error
+	logoutCalls int
 }
 
 func (f *fakeBackend) LoginWithOptions(_ context.Context, opts music2bb.LoginOptions, _ music2bb.Observer) (music2bb.Account, error) {
 	f.loginCalls++
 	f.loginOpts = opts
 	return music2bb.Account{ID: 1, Name: "tester"}, f.loginErr
+}
+
+func (f *fakeBackend) Logout(context.Context) error {
+	f.logoutCalls++
+	return f.logoutErr
 }
 
 func (f *fakeBackend) ParsePlaylistWithOptions(ctx context.Context, rawURL string, options music2bb.ParseOptions, observer music2bb.Observer) ([]music2bb.Song, error) {
@@ -262,6 +269,31 @@ func TestExplicitQRLoginAlias(t *testing.T) {
 	}
 	if !backend.loginOpts.AllowQR {
 		t.Fatal("--qr-login was not accepted")
+	}
+}
+
+func TestLogoutClearsLocalCookies(t *testing.T) {
+	backend := &fakeBackend{}
+	app, out, errOut := testApp(backend)
+	if exit := app.Run(context.Background(), []string{"logout"}); exit != ExitSuccess {
+		t.Fatalf("exit = %d, stderr=%s", exit, errOut.String())
+	}
+	if backend.logoutCalls != 1 {
+		t.Fatalf("logout calls = %d, want 1", backend.logoutCalls)
+	}
+	if !strings.Contains(out.String(), "本地 Cookie 已清除") {
+		t.Fatalf("stdout = %q", out.String())
+	}
+}
+
+func TestLogoutRejectsArguments(t *testing.T) {
+	backend := &fakeBackend{}
+	app, _, errOut := testApp(backend)
+	if exit := app.Run(context.Background(), []string{"logout", "extra"}); exit != ExitInvalidInput {
+		t.Fatalf("exit = %d, want %d", exit, ExitInvalidInput)
+	}
+	if backend.logoutCalls != 0 || !strings.Contains(errOut.String(), "用法: music2bb logout") {
+		t.Fatalf("logout calls = %d, stderr = %q", backend.logoutCalls, errOut.String())
 	}
 }
 

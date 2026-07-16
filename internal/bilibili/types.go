@@ -106,10 +106,11 @@ type Config struct {
 
 // CookieStore allows the reusable engine to persist authentication without
 // coupling callers to the filesystem. Implementations must be safe for
-// sequential Load/Save calls from a Client.
+// sequential Load/Save/Clear calls from a Client.
 type CookieStore interface {
 	Load() ([]CookieRecord, error)
 	Save([]CookieRecord) error
+	Clear() error
 	Exists() bool
 }
 

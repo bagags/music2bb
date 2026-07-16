@@ -3,6 +3,7 @@ package bilibili
 import (
 	"context"
 	"net/http"
+	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
@@ -30,6 +31,38 @@ func (c *Client) Account(ctx context.Context) (Account, error) {
 func (c *Client) IsLoggedIn(ctx context.Context) (bool, error) {
 	account, err := c.Account(ctx)
 	return account.LoggedIn, err
+}
+
+// Logout clears the persisted login and all authentication state held by this
+// client. It does not make a remote request to revoke the Bilibili session.
+func (c *Client) Logout(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	accountJar, err := newPersistentJar()
+	if err != nil {
+		return err
+	}
+	searchJar, err := cookiejar.New(nil)
+	if err != nil {
+		return err
+	}
+	if err := c.cookieStore.Clear(); err != nil {
+		return err
+	}
+	c.accountJar = accountJar
+	c.searchJar = searchJar
+	c.account.HTTP.Jar = accountJar
+	c.search.HTTP.Jar = searchJar
+	c.fingerprintMu.Lock()
+	c.fingerprintReady = false
+	c.fingerprintMu.Unlock()
+	c.wbiMu.Lock()
+	c.wbiImgKey = ""
+	c.wbiSubKey = ""
+	c.wbiAt = time.Time{}
+	c.wbiMu.Unlock()
+	return nil
 }
 
 type qrGenerateData struct {

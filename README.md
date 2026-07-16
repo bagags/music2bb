@@ -48,6 +48,7 @@ go build -trimpath -o music2bb ./cmd/music2bb
 ```text
 music2bb convert <playlist-url> [options]
 music2bb login
+music2bb logout
 music2bb favorites list
 music2bb favorites create <name> [--intro TEXT] [--public]
 music2bb browser install|status|clear
@@ -60,6 +61,14 @@ music2bb license
 ```bash
 music2bb login
 ```
+
+退出登录并清除本地保存的 Bilibili Cookie：
+
+```bash
+music2bb logout
+```
+
+该命令只清除本机的登录状态，不会远程撤销 Bilibili 会话。
 
 自动转换到指定收藏夹（以下使用酷狗优化来源作为示例）：
 

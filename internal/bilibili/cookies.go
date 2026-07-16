@@ -194,3 +194,13 @@ func (s fileCookieStore) Save(records []CookieRecord) error {
 	}
 	return os.Rename(name, s.path)
 }
+
+func (s fileCookieStore) Clear() error {
+	if s.path == "" {
+		return nil
+	}
+	if err := os.Remove(s.path); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}

@@ -39,6 +39,28 @@ func (a *App) runLogin(ctx context.Context, args []string) int {
 	return ExitSuccess
 }
 
+func (a *App) runLogout(ctx context.Context, args []string) int {
+	set := newFlagSet("logout", a.IO.Err)
+	var configDir string
+	set.StringVar(&configDir, "config-dir", "", "配置目录")
+	if err := set.Parse(interspersed(args, map[string]bool{"--config-dir": true})); err != nil {
+		if err == flag.ErrHelp {
+			return ExitSuccess
+		}
+		return ExitInvalidInput
+	}
+	if set.NArg() != 0 {
+		fmt.Fprintln(a.IO.Err, "用法: music2bb logout")
+		return ExitInvalidInput
+	}
+	if err := a.Backend.Logout(ctx); err != nil {
+		fmt.Fprintf(a.IO.Err, "退出登录失败: %v\n", err)
+		return exitFor(err)
+	}
+	fmt.Fprintln(a.IO.Out, "已退出登录（本地 Cookie 已清除）")
+	return ExitSuccess
+}
+
 func (a *App) runFavorites(ctx context.Context, args []string) int {
 	if len(args) == 0 {
 		fmt.Fprintln(a.IO.Err, "用法: music2bb favorites list|create")

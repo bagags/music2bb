@@ -52,6 +52,10 @@ func (e *Engine) Login(ctx context.Context, opts LoginOptions, observer Observer
 	return account, nil
 }
 
+func (e *Engine) Logout(ctx context.Context) error {
+	return classifyContext("logout", ErrorInternal, e.account.Logout(ctx))
+}
+
 func (e *Engine) ParsePlaylist(ctx context.Context, rawURL string, opts ParseOptions, observer Observer) ([]model.Song, error) {
 	if strings.TrimSpace(rawURL) == "" {
 		return nil, &OperationError{Category: ErrorInvalidInput, Operation: "parse playlist", Message: "playlist URL is required"}

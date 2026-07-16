@@ -133,6 +133,7 @@ type MatchClient interface {
 
 type AccountClient interface {
 	Login(ctx context.Context, opts LoginOptions, update func(LoginUpdate)) (Account, error)
+	Logout(context.Context) error
 	ListFavorites(ctx context.Context) ([]model.Favorite, error)
 	CreateFavorite(ctx context.Context, request CreateFavoriteRequest) (model.Favorite, error)
 	AddToFavorite(ctx context.Context, favoriteID int64, videos []model.Video) (AddResult, error)

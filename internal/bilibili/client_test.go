@@ -198,6 +198,34 @@ func TestCookiePersistenceIsPythonCompatible(t *testing.T) {
 	}
 }
 
+func TestLogoutClearsPersistedAndInMemoryCookies(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	client := testClient(t, server, Config{})
+	client.applyCookieString("bili_jct=csrf; SESSDATA=session")
+	if err := client.SaveCookies(); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Logout(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(client.cookieFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("cookie file still exists: %v", err)
+	}
+	home, err := url.Parse(client.endpoints.Home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cookies := client.accountJar.Cookies(home); len(cookies) != 0 {
+		t.Fatalf("in-memory cookies = %#v", cookies)
+	}
+	if ok, err := client.LoadCookies(); ok || !errors.Is(err, ErrNoCookieFile) {
+		t.Fatalf("LoadCookies() = %v, %v", ok, err)
+	}
+}
+
 func TestQRLoginEmitsPayloadAndUsesInjectedSleep(t *testing.T) {
 	var polls atomic.Int32
 	navFixture := fixture(t, "nav.json")
