@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"time"
 
 	music2bb "github.com/bagags/music2bb-go"
 )
@@ -25,10 +26,18 @@ type conversionSession struct {
 	loggedIn     bool
 	writeBlocked bool
 	haltReason   music2bb.RiskControlReason
+	state        *conversionState
+	refreshOnce  sync.Once
+	refreshErr   error
 }
 
 func newConversionSession(backend Backend, browser BrowserManager, rawURL string, options convertOptions, policy music2bb.BrowserPolicy) *conversionSession {
-	return &conversionSession{backend: backend, browser: browser, rawURL: rawURL, options: options, policy: policy}
+	session := &conversionSession{backend: backend, browser: browser, rawURL: rawURL, options: options, policy: policy}
+	if provider, ok := backend.(interface{ PersistentStatePaths() (string, string) }); ok {
+		configDir, _ := provider.PersistentStatePaths()
+		session.state = newConversionState(configDir, rawURL, time.Now)
+	}
+	return session
 }
 
 func shouldUseTUI(io IO, disabled bool) bool {
@@ -84,6 +93,77 @@ func (s *conversionSession) parse(ctx context.Context, observer music2bb.Observe
 }
 
 func (s *conversionSession) match(ctx context.Context, songs []music2bb.Song, observer music2bb.Observer) ([]music2bb.MatchResult, error) {
+	if err := s.prepareSearchState(ctx); err != nil {
+		return nil, err
+	}
+	restored, err := s.state.restore(songs, s.options.fresh)
+	if err != nil {
+		return nil, persistentStateError("restore conversion", err)
+	}
+	outcomes := make([]music2bb.MatchResult, len(songs))
+	pendingSongs := make([]music2bb.Song, 0, len(songs))
+	pendingIndexes := make([]int, 0, len(songs))
+	restoredCount := 0
+	for index, song := range songs {
+		song = songWithStableID(song)
+		if outcome, ok := restored[stableSongID(song)]; ok {
+			outcomes[index] = outcome
+			restoredCount++
+			if observer != nil {
+				copy := outcome
+				event := music2bb.ProgressEvent{Kind: music2bb.EventSong, Operation: "match", Current: restoredCount, Total: len(songs), Song: &copy.Song, Outcome: &copy}
+				if copy.HasSelection {
+					event.Match = &copy
+				}
+				observer.Observe(event)
+			}
+			continue
+		}
+		outcomes[index] = music2bb.MatchResult{
+			Song: song, NeedsReview: true, ReviewReason: music2bb.ReviewNotSearched,
+			SearchStatus: music2bb.SearchStatusNotSearched,
+		}
+		pendingSongs = append(pendingSongs, song)
+		pendingIndexes = append(pendingIndexes, index)
+	}
+	if len(pendingSongs) == 0 {
+		return outcomes, nil
+	}
+	var persistenceMu sync.Mutex
+	var persistenceErr error
+	trackingObserver := music2bb.ObserverFunc(func(event music2bb.ProgressEvent) {
+		if event.Kind == music2bb.EventSong && event.Operation == "match" {
+			event.Current += restoredCount
+			event.Total = len(songs)
+			if event.Outcome != nil {
+				if saveErr := s.state.saveOutcome(*event.Outcome); saveErr != nil {
+					persistenceMu.Lock()
+					if persistenceErr == nil {
+						persistenceErr = persistentStateError("save conversion checkpoint", saveErr)
+					}
+					persistenceMu.Unlock()
+				}
+			}
+		}
+		if observer != nil {
+			observer.Observe(event)
+		}
+	})
+	pendingOutcomes, matchErr := s.matchUnrestored(ctx, pendingSongs, trackingObserver)
+	for position, index := range pendingIndexes {
+		if position < len(pendingOutcomes) {
+			outcomes[index] = pendingOutcomes[position]
+		}
+		if saveErr := s.state.saveOutcome(outcomes[index]); saveErr != nil && persistenceErr == nil {
+			persistenceErr = persistentStateError("save conversion checkpoint", saveErr)
+		}
+	}
+	persistenceMu.Lock()
+	defer persistenceMu.Unlock()
+	return outcomes, joinSessionErrors(matchErr, persistenceErr)
+}
+
+func (s *conversionSession) matchUnrestored(ctx context.Context, songs []music2bb.Song, observer music2bb.Observer) ([]music2bb.MatchResult, error) {
 	if s.options.manual {
 		outcomes := make([]music2bb.MatchResult, len(songs))
 		for index, song := range songs {
@@ -99,12 +179,13 @@ func (s *conversionSession) match(ctx context.Context, songs []music2bb.Song, ob
 		identity = music2bb.SearchIdentitySession
 	}
 	baseOptions := music2bb.MatchOptions{
-		SearchPages:    s.options.searchPages,
-		TopK:           s.options.topK,
-		Workers:        s.options.workers,
-		Profile:        music2bb.MatchProfile(s.options.matchProfile),
-		SearchIdentity: identity,
-		SearchBudget:   s.options.searchBudget,
+		SearchPages:       s.options.searchPages,
+		TopK:              s.options.topK,
+		Workers:           s.options.workers,
+		Profile:           music2bb.MatchProfile(s.options.matchProfile),
+		SearchIdentity:    identity,
+		SearchBudget:      s.options.searchBudget,
+		SearchCachePolicy: s.searchCachePolicy(),
 	}
 	outcomes, err := s.backend.Match(ctx, songs, baseOptions, observer)
 	if riskReasonOf(err) == "" || identity == music2bb.SearchIdentitySession || s.options.searchIdentity != "auto" {
@@ -136,6 +217,7 @@ func (s *conversionSession) match(ctx context.Context, songs []music2bb.Song, ob
 		fallback, fallbackErr := s.backend.Match(ctx, []music2bb.Song{songs[index]}, fallbackOptions, observer)
 		if len(fallback) == 1 {
 			fallback[0].RemoteRequests += outcomes[index].RemoteRequests
+			fallback[0].CacheHits += outcomes[index].CacheHits
 			outcomes[index] = fallback[0]
 		}
 		if reason := riskReasonOf(fallbackErr); reason != "" {
@@ -157,6 +239,9 @@ func (s *conversionSession) match(ctx context.Context, songs []music2bb.Song, ob
 }
 
 func (s *conversionSession) search(ctx context.Context, song music2bb.Song, query string) ([]music2bb.MatchResult, error) {
+	if err := s.prepareSearchState(ctx); err != nil {
+		return nil, err
+	}
 	identity := music2bb.SearchIdentityAnonymous
 	if s.options.searchIdentity == string(music2bb.SearchIdentitySession) {
 		if _, err := s.login(ctx, nil); err != nil {
@@ -164,7 +249,10 @@ func (s *conversionSession) search(ctx context.Context, song music2bb.Song, quer
 		}
 		identity = music2bb.SearchIdentitySession
 	}
-	options := music2bb.CandidateSearchOptions{Limit: 10, Profile: music2bb.MatchProfile(s.options.matchProfile), SearchIdentity: identity}
+	options := music2bb.CandidateSearchOptions{
+		Limit: 10, Profile: music2bb.MatchProfile(s.options.matchProfile), SearchIdentity: identity,
+		SearchCachePolicy: s.searchCachePolicy(),
+	}
 	candidates, err := s.backend.SearchCandidatesWithOptions(ctx, song, query, options)
 	if riskReasonOf(err) == "" || s.options.searchIdentity != "auto" {
 		if reason := riskReasonOf(err); reason != "" {
@@ -182,6 +270,59 @@ func (s *conversionSession) search(ctx context.Context, song music2bb.Song, quer
 		s.blockWrites(reason)
 	}
 	return candidates, err
+}
+
+func (s *conversionSession) prepareSearchState(ctx context.Context) error {
+	if !s.options.refreshSearch {
+		return nil
+	}
+	s.refreshOnce.Do(func() {
+		resetter, ok := s.backend.(interface{ ResetAnonymousIdentity(context.Context) error })
+		if !ok {
+			s.refreshErr = &music2bb.Error{Category: music2bb.ErrorInternal, Operation: "refresh search", Message: "backend does not support anonymous identity reset"}
+			return
+		}
+		s.refreshErr = resetter.ResetAnonymousIdentity(ctx)
+	})
+	return s.refreshErr
+}
+
+func (s *conversionSession) searchCachePolicy() music2bb.SearchCachePolicy {
+	if s.options.refreshSearch {
+		return music2bb.SearchCacheRefresh
+	}
+	return music2bb.SearchCacheDefault
+}
+
+func (s *conversionSession) recordDecision(outcome music2bb.MatchResult, skipped bool) error {
+	if err := s.state.saveDecision(outcome, skipped); err != nil {
+		return persistentStateError("save manual decision", err)
+	}
+	return nil
+}
+
+func (s *conversionSession) clearDecision(song music2bb.Song) error {
+	if err := s.state.removeDecision(song); err != nil {
+		return persistentStateError("clear manual decision", err)
+	}
+	return nil
+}
+
+func persistentStateError(operation string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &music2bb.Error{Category: music2bb.ErrorInternal, Operation: operation, Err: err}
+}
+
+func joinSessionErrors(primary, persistence error) error {
+	if primary == nil {
+		return persistence
+	}
+	if persistence == nil {
+		return primary
+	}
+	return errors.Join(primary, persistence)
 }
 
 func (s *conversionSession) videoDetail(ctx context.Context, bvid string) (music2bb.Video, error) {

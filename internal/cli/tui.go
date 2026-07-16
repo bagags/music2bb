@@ -961,7 +961,11 @@ func (m *tuiModel) acceptCandidate() {
 	*outcome = selected
 	m.confirmed[m.songCursor] = true
 	m.skipped[m.songCursor] = false
-	m.validation = "已接受当前候选。"
+	if err := m.controller.session.recordDecision(selected, false); err != nil {
+		m.validation = "候选已接受，但保存人工决定失败: " + err.Error()
+	} else {
+		m.validation = "已接受当前候选。"
+	}
 }
 
 func (m *tuiModel) skipCurrent() {
@@ -973,7 +977,11 @@ func (m *tuiModel) skipCurrent() {
 	m.outcomes[m.songCursor].HasSelection = false
 	m.outcomes[m.songCursor].Video = nil
 	m.outcomes[m.songCursor].NeedsReview = false
-	m.validation = "已跳过当前歌曲。"
+	if err := m.controller.session.recordDecision(m.outcomes[m.songCursor], true); err != nil {
+		m.validation = "歌曲已跳过，但保存决定失败: " + err.Error()
+	} else {
+		m.validation = "已跳过当前歌曲。"
+	}
 	m.nextUnresolved()
 }
 
@@ -989,7 +997,11 @@ func (m *tuiModel) clearCurrent() {
 	if m.outcomes[m.songCursor].ReviewReason == music2bb.ReviewNone {
 		m.outcomes[m.songCursor].ReviewReason = music2bb.ReviewArtistUnverified
 	}
-	m.validation = "已清除选择。"
+	if err := m.controller.session.clearDecision(m.outcomes[m.songCursor].Song); err != nil {
+		m.validation = "选择已清除，但删除历史决定失败: " + err.Error()
+	} else {
+		m.validation = "已清除选择。"
+	}
 }
 
 func (m *tuiModel) resolved(index int) bool {

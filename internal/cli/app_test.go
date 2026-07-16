@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	music2bb "github.com/bagags/music2bb-go"
 )
@@ -26,6 +28,22 @@ type fakeBackend struct {
 	loginCalls  int
 	logoutErr   error
 	logoutCalls int
+}
+
+type persistentFakeBackend struct {
+	*fakeBackend
+	configDir string
+	cacheDir  string
+	resets    int
+}
+
+func (f *persistentFakeBackend) PersistentStatePaths() (string, string) {
+	return f.configDir, f.cacheDir
+}
+
+func (f *persistentFakeBackend) ResetAnonymousIdentity(context.Context) error {
+	f.resets++
+	return nil
 }
 
 func (f *fakeBackend) LoginWithOptions(_ context.Context, opts music2bb.LoginOptions, _ music2bb.Observer) (music2bb.Account, error) {
@@ -57,7 +75,12 @@ func (f *fakeBackend) Match(_ context.Context, songs []music2bb.Song, opts music
 		return append([]music2bb.MatchResult(nil), f.match...), nil
 	}
 	video := music2bb.Video{BVID: "BV1", Title: "song", Uploader: "artist"}
-	return []music2bb.MatchResult{{Song: songs[0], HasSelection: true, Video: &video, Matched: true}}, nil
+	results := make([]music2bb.MatchResult, len(songs))
+	for index, song := range songs {
+		copy := video
+		results[index] = music2bb.MatchResult{Song: song, HasSelection: true, Video: &copy, Matched: true}
+	}
+	return results, nil
 }
 
 func (f *fakeBackend) SearchCandidatesWithOptions(_ context.Context, _ music2bb.Song, _ string, options music2bb.CandidateSearchOptions) ([]music2bb.MatchResult, error) {
@@ -141,6 +164,110 @@ func TestConvertInterspersedOptions(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "成功: 1") {
 		t.Fatalf("output = %q", out.String())
+	}
+}
+
+func TestFreshAndRefreshSearchHaveOrthogonalResumeSemantics(t *testing.T) {
+	root := t.TempDir()
+	base := &fakeBackend{}
+	base.matchFunc = func(songs []music2bb.Song, _ music2bb.MatchOptions) ([]music2bb.MatchResult, error) {
+		outcomes := make([]music2bb.MatchResult, len(songs))
+		for index, song := range songs {
+			video := music2bb.Video{BVID: "BV-" + song.Name, Title: song.Name}
+			outcomes[index] = music2bb.MatchResult{
+				Song: song, Video: &video, HasSelection: true, Matched: true,
+				SearchStatus: music2bb.SearchStatusCompleted,
+			}
+		}
+		return outcomes, nil
+	}
+	backend := &persistentFakeBackend{fakeBackend: base, configDir: root, cacheDir: root + "/cache"}
+	songs := []music2bb.Song{{Name: "song", SourceID: "source:song"}}
+	options := convertOptions{searchPages: 3, topK: 5, workers: 2, matchProfile: "standard", searchIdentity: "auto", searchBudget: 4}
+
+	first := newConversionSession(backend, nil, "https://example.test/list", options, music2bb.BrowserAuto)
+	if _, err := first.match(context.Background(), songs, nil); err != nil {
+		t.Fatal(err)
+	}
+	if base.matchCalls != 1 {
+		t.Fatalf("initial match calls = %d", base.matchCalls)
+	}
+
+	resumed := newConversionSession(backend, nil, "https://example.test/list", options, music2bb.BrowserAuto)
+	if _, err := resumed.match(context.Background(), songs, nil); err != nil {
+		t.Fatal(err)
+	}
+	if base.matchCalls != 1 {
+		t.Fatalf("checkpoint resume made a remote match call: %d", base.matchCalls)
+	}
+
+	refreshOptions := options
+	refreshOptions.refreshSearch = true
+	refresh := newConversionSession(backend, nil, "https://example.test/list", refreshOptions, music2bb.BrowserAuto)
+	if _, err := refresh.match(context.Background(), songs, nil); err != nil {
+		t.Fatal(err)
+	}
+	if backend.resets != 1 || base.matchCalls != 1 {
+		t.Fatalf("refresh-only resets/matches = %d/%d", backend.resets, base.matchCalls)
+	}
+
+	freshOptions := options
+	freshOptions.fresh = true
+	fresh := newConversionSession(backend, nil, "https://example.test/list", freshOptions, music2bb.BrowserAuto)
+	if _, err := fresh.match(context.Background(), songs, nil); err != nil {
+		t.Fatal(err)
+	}
+	if base.matchCalls != 2 || base.matchOpts.SearchCachePolicy != music2bb.SearchCacheDefault {
+		t.Fatalf("fresh match calls/options = %d/%#v", base.matchCalls, base.matchOpts)
+	}
+
+	bothOptions := options
+	bothOptions.fresh, bothOptions.refreshSearch = true, true
+	both := newConversionSession(backend, nil, "https://example.test/list", bothOptions, music2bb.BrowserAuto)
+	if _, err := both.match(context.Background(), songs, nil); err != nil {
+		t.Fatal(err)
+	}
+	if backend.resets != 2 || base.matchCalls != 3 || base.matchOpts.SearchCachePolicy != music2bb.SearchCacheRefresh {
+		t.Fatalf("combined resets/matches/options = %d/%d/%#v", backend.resets, base.matchCalls, base.matchOpts)
+	}
+}
+
+func TestSessionResumeMatchesOnlyIncompleteSongsAndRealignsOrder(t *testing.T) {
+	root := t.TempDir()
+	rawURL := "https://example.test/list"
+	songA := music2bb.Song{Name: "A", SourceID: "source:a"}
+	songB := music2bb.Song{Name: "B", SourceID: "source:b"}
+	songC := music2bb.Song{Name: "C", SourceID: "source:c"}
+	videoA := music2bb.Video{BVID: "BVA", Title: "A"}
+	state := newConversionState(root, rawURL, time.Now)
+	if err := state.saveOutcome(music2bb.MatchResult{Song: songA, Video: &videoA, HasSelection: true, SearchStatus: music2bb.SearchStatusCompleted}); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.saveOutcome(music2bb.MatchResult{Song: songB, NeedsReview: true, SearchStatus: music2bb.SearchStatusRiskControl}); err != nil {
+		t.Fatal(err)
+	}
+
+	base := &fakeBackend{}
+	base.matchFunc = func(songs []music2bb.Song, _ music2bb.MatchOptions) ([]music2bb.MatchResult, error) {
+		if got := []string{songs[0].SourceID, songs[1].SourceID}; !reflect.DeepEqual(got, []string{"source:b", "source:c"}) {
+			t.Fatalf("pending songs = %#v", got)
+		}
+		outcomes := make([]music2bb.MatchResult, len(songs))
+		for index, song := range songs {
+			video := music2bb.Video{BVID: "BV-" + song.Name}
+			outcomes[index] = music2bb.MatchResult{Song: song, Video: &video, HasSelection: true, SearchStatus: music2bb.SearchStatusCompleted}
+		}
+		return outcomes, nil
+	}
+	backend := &persistentFakeBackend{fakeBackend: base, configDir: root, cacheDir: root + "/cache"}
+	options := convertOptions{searchPages: 3, topK: 5, workers: 2, matchProfile: "standard", searchIdentity: "auto", searchBudget: 4}
+	session := newConversionSession(backend, nil, rawURL, options, music2bb.BrowserAuto)
+	outcomes, err := session.match(context.Background(), []music2bb.Song{songB, songA, songC}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outcomes) != 3 || outcomes[0].Video.BVID != "BV-B" || outcomes[1].Video.BVID != "BVA" || outcomes[2].Video.BVID != "BV-C" {
+		t.Fatalf("realigned outcomes = %#v", outcomes)
 	}
 }
 

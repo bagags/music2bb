@@ -28,6 +28,8 @@ type convertOptions struct {
 	manualReview   bool
 	qrLogin        bool
 	noTUI          bool
+	fresh          bool
+	refreshSearch  bool
 }
 
 func (a *App) runConvert(ctx context.Context, args []string) int {
@@ -57,6 +59,8 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	set.BoolVar(&options.manual, "manual", false, "完全手动匹配")
 	set.BoolVar(&options.qrLogin, "qr-login", true, "允许扫码登录")
 	set.BoolVar(&options.noTUI, "no-tui", false, "使用引导式文本界面")
+	set.BoolVar(&options.fresh, "fresh", false, "忽略转换 checkpoint 和历史人工决定")
+	set.BoolVar(&options.refreshSearch, "refresh-search", false, "刷新搜索缓存并重置匿名设备状态")
 	noQR := false
 	set.BoolVar(&noQR, "no-qr-login", false, "禁止扫码登录")
 	valueFlags := map[string]bool{
@@ -93,6 +97,9 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	if a.Backend == nil {
 		fmt.Fprintln(a.IO.Err, "后端未配置")
 		return ExitInternal
+	}
+	if options.refreshSearch && a.IO.Interactive {
+		fmt.Fprintln(a.IO.Err, "警告：--refresh-search 会重置匿名设备状态并增加远程请求，可能提高触发平台风控的概率。")
 	}
 	rawURL := set.Arg(0)
 	session := newConversionSession(a.Backend, a.Browser, rawURL, options, policy)
@@ -267,6 +274,16 @@ func (a *App) manualMatch(ctx context.Context, session *conversionSession, song 
 			outcome.Matched = true
 			outcome.HasSelection = true
 			outcome.ManualOverride = true
+			if saveErr := session.recordDecision(outcome, false); saveErr != nil {
+				fmt.Fprintf(a.IO.Err, "保存人工决定失败: %v\n", saveErr)
+			}
+		}
+		return outcome
+	}
+	if strings.EqualFold(choice, "x") {
+		outcome.NeedsReview = false
+		if saveErr := session.recordDecision(outcome, true); saveErr != nil {
+			fmt.Fprintf(a.IO.Err, "保存跳过决定失败: %v\n", saveErr)
 		}
 		return outcome
 	}
@@ -278,6 +295,9 @@ func (a *App) manualMatch(ctx context.Context, session *conversionSession, song 
 		outcome.HasSelection = true
 		outcome.ManualOverride = true
 		outcome.Candidates = candidates
+		if saveErr := session.recordDecision(outcome, false); saveErr != nil {
+			fmt.Fprintf(a.IO.Err, "保存人工决定失败: %v\n", saveErr)
+		}
 	}
 	return outcome
 }
@@ -310,6 +330,9 @@ func (a *App) reviewMatches(ctx context.Context, session *conversionSession, out
 				candidate.Candidates = outcomes[index].Candidates
 				outcomes[index] = candidate
 				if candidate.HasSelection {
+					if saveErr := session.recordDecision(candidate, false); saveErr != nil {
+						fmt.Fprintf(a.IO.Err, "保存人工决定失败: %v\n", saveErr)
+					}
 					break
 				}
 			}
@@ -318,6 +341,9 @@ func (a *App) reviewMatches(ctx context.Context, session *conversionSession, out
 				if outcomes[index].HasSelection {
 					outcomes[index].NeedsReview = false
 					outcomes[index].ReviewReason = music2bb.ReviewNone
+					if saveErr := session.recordDecision(outcomes[index], false); saveErr != nil {
+						fmt.Fprintf(a.IO.Err, "保存人工决定失败: %v\n", saveErr)
+					}
 					break
 				}
 			case "s":
@@ -332,6 +358,9 @@ func (a *App) reviewMatches(ctx context.Context, session *conversionSession, out
 				outcomes[index].Video = nil
 				outcomes[index].HasSelection = false
 				outcomes[index].NeedsReview = false
+				if saveErr := session.recordDecision(outcomes[index], true); saveErr != nil {
+					fmt.Fprintf(a.IO.Err, "保存跳过决定失败: %v\n", saveErr)
+				}
 				break
 			default:
 				fmt.Fprintln(a.IO.Err, "无效选择；每首待审歌曲必须选择或跳过")
