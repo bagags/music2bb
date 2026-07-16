@@ -417,6 +417,19 @@ func TestSessionBlocksWritesAfterSessionRiskControl(t *testing.T) {
 	if backend.addCalls != 0 {
 		t.Fatalf("favorite write calls = %d, want zero", backend.addCalls)
 	}
+	if _, searchErr := session.search(context.Background(), music2bb.Song{Name: "song"}, "query", nil); riskReasonOf(searchErr) != music2bb.RiskControlCode412 {
+		t.Fatalf("manual search halt error = %T %v", searchErr, searchErr)
+	}
+	if backend.searchCalls != 0 {
+		t.Fatalf("manual search made %d remote calls after halt", backend.searchCalls)
+	}
+	matchCalls := backend.matchCalls
+	if _, retryErr := session.match(context.Background(), []music2bb.Song{{Name: "retry"}}, nil); riskReasonOf(retryErr) != music2bb.RiskControlCode412 {
+		t.Fatalf("batch search halt error = %T %v", retryErr, retryErr)
+	}
+	if backend.matchCalls != matchCalls {
+		t.Fatalf("batch search made %d additional remote calls after halt", backend.matchCalls-matchCalls)
+	}
 }
 
 func TestSessionWriteReceiptsSkipSucceededBVIDsOnRetry(t *testing.T) {

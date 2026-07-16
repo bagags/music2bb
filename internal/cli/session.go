@@ -188,6 +188,9 @@ func (s *conversionSession) matchUnrestored(ctx context.Context, songs []music2b
 		}
 		return outcomes, nil
 	}
+	if err := s.ensureSearchAllowed(); err != nil {
+		return nil, err
+	}
 	identity := music2bb.SearchIdentityAnonymous
 	if s.options.searchIdentity == string(music2bb.SearchIdentitySession) {
 		if _, err := s.login(ctx, observer); err != nil {
@@ -265,6 +268,9 @@ func (s *conversionSession) matchUnrestored(ctx context.Context, songs []music2b
 }
 
 func (s *conversionSession) search(ctx context.Context, song music2bb.Song, query string, observer music2bb.Observer) ([]music2bb.MatchResult, error) {
+	if err := s.ensureSearchAllowed(); err != nil {
+		return nil, err
+	}
 	if err := s.prepareSearchState(ctx); err != nil {
 		return nil, err
 	}
@@ -559,6 +565,21 @@ func (s *conversionSession) ensureWritesAllowed() error {
 	s.loginMu.Unlock()
 	if blocked {
 		return &music2bb.Error{Category: music2bb.ErrorNetwork, Operation: "write", Message: fmt.Sprintf("搜索因风控停止（%s）；本次运行禁止写入收藏夹", reason)}
+	}
+	return nil
+}
+
+func (s *conversionSession) ensureSearchAllowed() error {
+	s.loginMu.Lock()
+	blocked, reason := s.writeBlocked, s.haltReason
+	s.loginMu.Unlock()
+	if blocked {
+		return &music2bb.Error{
+			Category:   music2bb.ErrorNetwork,
+			Operation:  "search",
+			Message:    fmt.Sprintf("搜索因风控停止（%s）；只能离线审核已获取的候选", reason),
+			RiskReason: reason,
+		}
 	}
 	return nil
 }
