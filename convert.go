@@ -189,6 +189,15 @@ func observerAdapter(observer Observer) service.Observer {
 			match := outcomesFromInternal([]service.MatchOutcome{*event.Outcome})[0]
 			converted.Outcome = &match
 		}
+		if event.WriteReceipt != nil {
+			receipt := WriteReceipt{
+				FavoriteID: event.WriteReceipt.FavoriteID,
+				BVID:       event.WriteReceipt.BVID,
+				Succeeded:  event.WriteReceipt.Succeeded,
+				Reason:     event.WriteReceipt.Reason,
+			}
+			converted.WriteReceipt = &receipt
+		}
 		observer.Observe(converted)
 	})
 }

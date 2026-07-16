@@ -286,9 +286,22 @@ func (a *bilibiliAdapter) CreateFavorite(ctx context.Context, request service.Cr
 
 func (a *bilibiliAdapter) AddToFavorite(ctx context.Context, favoriteID int64, videos []model.Video) (service.AddResult, error) {
 	result, err := a.client.AddToFavorite(ctx, favoriteID, videos)
+	return favoriteResultToService(result), err
+}
+
+func (a *bilibiliAdapter) AddToFavoriteWithReceipts(ctx context.Context, favoriteID int64, videos []model.Video, receipt func(service.WriteReceipt)) (service.AddResult, error) {
+	result, err := a.client.AddToFavoriteWithReceipts(ctx, favoriteID, videos, func(item bilibili.WriteReceipt) {
+		if receipt != nil {
+			receipt(service.WriteReceipt{FavoriteID: item.FavoriteID, BVID: item.BVID, Succeeded: item.Succeeded, Reason: item.Reason})
+		}
+	})
+	return favoriteResultToService(result), err
+}
+
+func favoriteResultToService(result bilibili.AddResult) service.AddResult {
 	converted := service.AddResult{FavoriteID: result.FavoriteID, Succeeded: append([]string(nil), result.Succeeded...)}
 	for _, failure := range result.Failed {
 		converted.Failed = append(converted.Failed, service.AddFailure{BVID: failure.BVID, Reason: failure.Reason})
 	}
-	return converted, err
+	return converted
 }

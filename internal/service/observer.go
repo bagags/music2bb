@@ -26,8 +26,10 @@ type ProgressEvent struct {
 	Song      *model.Song
 	Match     *model.MatchResult
 	Outcome   *MatchOutcome
-	QRPayload string
-	At        time.Time
+	// WriteReceipt is set for each completed favorite-write attempt.
+	WriteReceipt *WriteReceipt
+	QRPayload    string
+	At           time.Time
 }
 
 type Observer interface {

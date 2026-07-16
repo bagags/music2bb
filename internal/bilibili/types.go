@@ -241,6 +241,14 @@ type AddResult struct {
 	Failed     []AddFailure
 }
 
+// WriteReceipt reports one completed favorite-write attempt.
+type WriteReceipt struct {
+	FavoriteID int64
+	BVID       string
+	Succeeded  bool
+	Reason     string
+}
+
 func (r AddResult) Error() error {
 	if len(r.Failed) == 0 {
 		return nil

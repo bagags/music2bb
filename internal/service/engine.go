@@ -475,9 +475,27 @@ func (e *Engine) AddToFavorite(ctx context.Context, favoriteID int64, outcomes [
 		return AddResult{FavoriteID: favoriteID}, &OperationError{Category: ErrorNoMatches, Operation: "add favorite", Message: "no selected videos"}
 	}
 	updates := serial(observer, e.now)
-	result, err := e.account.AddToFavorite(ctx, favoriteID, videos)
-	for index, bvid := range result.Succeeded {
-		updates.emit(ProgressEvent{Kind: EventVideo, Operation: "add_favorite", Message: bvid, Current: index + 1, Total: len(videos)})
+	var result AddResult
+	var err error
+	if reporting, ok := e.account.(AccountClientWithWriteReceipts); ok {
+		completed := 0
+		result, err = reporting.AddToFavoriteWithReceipts(ctx, favoriteID, videos, func(receipt WriteReceipt) {
+			completed++
+			updates.emit(ProgressEvent{
+				Kind: EventVideo, Operation: "add_favorite", Message: receipt.BVID,
+				Current: completed, Total: len(videos), WriteReceipt: &receipt,
+			})
+		})
+	} else {
+		result, err = e.account.AddToFavorite(ctx, favoriteID, videos)
+		for index, bvid := range result.Succeeded {
+			receipt := WriteReceipt{FavoriteID: favoriteID, BVID: bvid, Succeeded: true}
+			updates.emit(ProgressEvent{Kind: EventVideo, Operation: "add_favorite", Message: bvid, Current: index + 1, Total: len(videos), WriteReceipt: &receipt})
+		}
+		for index, failure := range result.Failed {
+			receipt := WriteReceipt{FavoriteID: favoriteID, BVID: failure.BVID, Reason: failure.Reason}
+			updates.emit(ProgressEvent{Kind: EventVideo, Operation: "add_favorite", Message: failure.BVID, Current: len(result.Succeeded) + index + 1, Total: len(videos), WriteReceipt: &receipt})
+		}
 	}
 	if err != nil {
 		category := ErrorPartialWrite

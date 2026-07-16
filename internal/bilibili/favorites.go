@@ -68,18 +68,33 @@ func (c *Client) CreateFavorite(ctx context.Context, request CreateFavoriteReque
 }
 
 func (c *Client) AddToFavorite(ctx context.Context, favoriteID int64, videos []model.Video) (AddResult, error) {
+	return c.AddToFavoriteWithReceipts(ctx, favoriteID, videos, nil)
+}
+
+// AddToFavoriteWithReceipts reports each item as soon as its remote attempt
+// finishes. The callback is serialized in input order.
+func (c *Client) AddToFavoriteWithReceipts(ctx context.Context, favoriteID int64, videos []model.Video, receipt func(WriteReceipt)) (AddResult, error) {
 	result := AddResult{FavoriteID: favoriteID, Succeeded: make([]string, 0, len(videos))}
+	emit := func(item WriteReceipt) {
+		if receipt != nil {
+			receipt(item)
+		}
+	}
 	csrf := c.csrf()
 	if csrf == "" {
 		for index, video := range videos {
-			result.Failed = append(result.Failed, AddFailure{Index: index, BVID: video.BVID, Reason: "missing bili_jct cookie"})
+			failure := AddFailure{Index: index, BVID: video.BVID, Reason: "missing bili_jct cookie"}
+			result.Failed = append(result.Failed, failure)
+			emit(WriteReceipt{FavoriteID: favoriteID, BVID: video.BVID, Reason: failure.Reason})
 		}
 		return result, result.Error()
 	}
 	for index, video := range videos {
 		if err := ctx.Err(); err != nil {
 			for pending := index; pending < len(videos); pending++ {
-				result.Failed = append(result.Failed, AddFailure{Index: pending, BVID: videos[pending].BVID, Reason: err.Error(), Err: err})
+				failure := AddFailure{Index: pending, BVID: videos[pending].BVID, Reason: err.Error(), Err: err}
+				result.Failed = append(result.Failed, failure)
+				emit(WriteReceipt{FavoriteID: favoriteID, BVID: failure.BVID, Reason: failure.Reason})
 			}
 			return result, errors.Join(err, result.Error())
 		}
@@ -91,7 +106,9 @@ func (c *Client) AddToFavorite(ctx context.Context, favoriteID int64, videos []m
 				if err != nil {
 					reason = err.Error()
 				}
-				result.Failed = append(result.Failed, AddFailure{Index: index, BVID: video.BVID, Reason: reason, Err: err})
+				failure := AddFailure{Index: index, BVID: video.BVID, Reason: reason, Err: err}
+				result.Failed = append(result.Failed, failure)
+				emit(WriteReceipt{FavoriteID: favoriteID, BVID: video.BVID, Reason: reason})
 				continue
 			}
 			aid = detail.AID
@@ -104,19 +121,26 @@ func (c *Client) AddToFavorite(ctx context.Context, favoriteID int64, videos []m
 			form = signed
 		} else if ctx.Err() != nil {
 			for pending := index; pending < len(videos); pending++ {
-				result.Failed = append(result.Failed, AddFailure{Index: pending, BVID: videos[pending].BVID, Reason: ctx.Err().Error(), Err: ctx.Err()})
+				failure := AddFailure{Index: pending, BVID: videos[pending].BVID, Reason: ctx.Err().Error(), Err: ctx.Err()}
+				result.Failed = append(result.Failed, failure)
+				emit(WriteReceipt{FavoriteID: favoriteID, BVID: failure.BVID, Reason: failure.Reason})
 			}
 			return result, errors.Join(ctx.Err(), result.Error())
 		}
 		if err := c.post(ctx, "add favorite resource", c.endpoints.FavoriteDeal, form, nil); err != nil {
-			result.Failed = append(result.Failed, AddFailure{Index: index, BVID: video.BVID, Reason: err.Error(), Err: err})
+			failure := AddFailure{Index: index, BVID: video.BVID, Reason: err.Error(), Err: err}
+			result.Failed = append(result.Failed, failure)
+			emit(WriteReceipt{FavoriteID: favoriteID, BVID: video.BVID, Reason: failure.Reason})
 			continue
 		}
 		result.Succeeded = append(result.Succeeded, video.BVID)
+		emit(WriteReceipt{FavoriteID: favoriteID, BVID: video.BVID, Succeeded: true})
 		if c.writeDelay > 0 && index+1 < len(videos) {
 			if err := c.sleep(ctx, c.writeDelay); err != nil {
 				for pending := index + 1; pending < len(videos); pending++ {
-					result.Failed = append(result.Failed, AddFailure{Index: pending, BVID: videos[pending].BVID, Reason: err.Error(), Err: err})
+					failure := AddFailure{Index: pending, BVID: videos[pending].BVID, Reason: err.Error(), Err: err}
+					result.Failed = append(result.Failed, failure)
+					emit(WriteReceipt{FavoriteID: favoriteID, BVID: failure.BVID, Reason: failure.Reason})
 				}
 				return result, errors.Join(err, result.Error())
 			}

@@ -486,15 +486,19 @@ func TestFavoriteOperationsPreserveOrderedPartialFailuresAndDoNotRetryWrites(t *
 	if err != nil || created.ID != 900 || created.Title != "Canary" {
 		t.Fatalf("CreateFavorite = %#v, %v", created, err)
 	}
-	result, err := client.AddToFavorite(context.Background(), 900, []model.Video{
+	var receipts []WriteReceipt
+	result, err := client.AddToFavoriteWithReceipts(context.Background(), 900, []model.Video{
 		{BVID: "BV-ok", AID: 11}, {BVID: "BV-api", AID: 22}, {BVID: "BV-http", AID: 33},
-	})
+	}, func(receipt WriteReceipt) { receipts = append(receipts, receipt) })
 	var partial *PartialWriteError
 	if !errors.As(err, &partial) {
 		t.Fatalf("AddToFavorite error = %T %v", err, err)
 	}
 	if !reflect.DeepEqual(result.Succeeded, []string{"BV-ok"}) || len(result.Failed) != 2 || result.Failed[0].Index != 1 || result.Failed[1].Index != 2 {
 		t.Fatalf("AddToFavorite result = %#v", result)
+	}
+	if len(receipts) != 3 || !receipts[0].Succeeded || receipts[0].BVID != "BV-ok" || receipts[1].Succeeded || receipts[1].BVID != "BV-api" || receipts[2].Succeeded || receipts[2].BVID != "BV-http" {
+		t.Fatalf("write receipts = %#v", receipts)
 	}
 	dealCalls.Range(func(key, value any) bool {
 		if calls := value.(*atomic.Int32).Load(); calls != 1 {

@@ -796,11 +796,19 @@ func TestAddToFavoriteReturnsPartialResultAndTypedError(t *testing.T) {
 		{Song: Song{Name: "one"}, Video: &Video{BVID: "BV1", AID: 1}, Matched: true, HasSelection: true},
 		{Song: Song{Name: "two"}, Video: &Video{BVID: "BV2", AID: 2}, Matched: true, HasSelection: true},
 	}
-	result, err := engine.AddToFavorite(context.Background(), 9, matches, nil)
+	var receipts []WriteReceipt
+	result, err := engine.AddToFavorite(context.Background(), 9, matches, ObserverFunc(func(event ProgressEvent) {
+		if event.WriteReceipt != nil {
+			receipts = append(receipts, *event.WriteReceipt)
+		}
+	}))
 	if len(result.Succeeded) != 1 || len(result.Failed) != 1 {
 		t.Fatalf("partial result = %#v", result)
 	}
 	if CategoryOf(err) != ErrorPartialWrite {
 		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorPartialWrite, err)
+	}
+	if len(receipts) != 2 || !receipts[0].Succeeded || receipts[0].BVID != "BV1" || receipts[1].Succeeded || receipts[1].BVID != "BV2" {
+		t.Fatalf("public write receipts = %#v", receipts)
 	}
 }

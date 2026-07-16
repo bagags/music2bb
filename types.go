@@ -62,13 +62,18 @@ type MatchResult struct {
 	ManualOverride  bool
 	NeedsReview     bool
 	ReviewReason    ReviewReason
-	SearchIdentity  SearchIdentity
-	SearchStatus    SearchStatus
-	RemoteRequests  int
-	CacheHits       int
-	RiskReason      RiskControlReason
-	Candidates      []MatchResult
-	Failure         *ItemFailure
+	// SearchIdentity is the isolated identity used for the final search attempt.
+	SearchIdentity SearchIdentity
+	// SearchStatus distinguishes completed, halted, unsearched, exhausted, and failed work.
+	SearchStatus SearchStatus
+	// RemoteRequests counts budget-consuming remote search pages for this run.
+	RemoteRequests int
+	// CacheHits counts budget-free persistent search page hits.
+	CacheHits int
+	// RiskReason identifies the platform signal that halted this song, when any.
+	RiskReason RiskControlReason
+	Candidates []MatchResult
+	Failure    *ItemFailure
 }
 
 // ReviewReason explains why a song could not be selected automatically.
@@ -90,20 +95,29 @@ const (
 type SearchStatus string
 
 const (
-	SearchStatusCompleted       SearchStatus = "completed"
-	SearchStatusRiskControl     SearchStatus = "risk_control"
-	SearchStatusNotSearched     SearchStatus = "not_searched"
+	// SearchStatusCompleted means adaptive matching reached a final reviewable outcome.
+	SearchStatusCompleted SearchStatus = "completed"
+	// SearchStatusRiskControl means the current request was rejected by platform risk control.
+	SearchStatusRiskControl SearchStatus = "risk_control"
+	// SearchStatusNotSearched means batch halt prevented remote work for this song.
+	SearchStatusNotSearched SearchStatus = "not_searched"
+	// SearchStatusBudgetExhausted means no further uncached page fit the per-song budget.
 	SearchStatusBudgetExhausted SearchStatus = "budget_exhausted"
-	SearchStatusFailed          SearchStatus = "failed"
+	// SearchStatusFailed means ordinary remote search attempts failed.
+	SearchStatusFailed SearchStatus = "failed"
 )
 
 // RiskControlReason is a machine-readable Bilibili risk-control signal.
 type RiskControlReason string
 
 const (
-	RiskControlVoucher  RiskControlReason = "voucher"
-	RiskControlHTTP412  RiskControlReason = "http_412"
-	RiskControlCode412  RiskControlReason = "code_-412"
+	// RiskControlVoucher is a Gaia challenge response.
+	RiskControlVoucher RiskControlReason = "voucher"
+	// RiskControlHTTP412 is an HTTP 412 rejection.
+	RiskControlHTTP412 RiskControlReason = "http_412"
+	// RiskControlCode412 is Bilibili API code -412.
+	RiskControlCode412 RiskControlReason = "code_-412"
+	// RiskControlCode1200 is Bilibili API code -1200.
 	RiskControlCode1200 RiskControlReason = "code_-1200"
 )
 
@@ -130,10 +144,23 @@ type AddFailure struct {
 	Reason string
 }
 
+// AddResult reports favorite writes, failures, and checkpoint-idempotent skips.
 type AddResult struct {
 	FavoriteID int64
 	Succeeded  []string
 	Failed     []AddFailure
+	// Skipped contains BVIDs already recorded as successful in the current
+	// conversion checkpoint. They were not submitted again.
+	Skipped []string
+}
+
+// WriteReceipt reports the result of one favorite-write attempt. Receipt
+// events are emitted immediately so frontends can persist partial progress.
+type WriteReceipt struct {
+	FavoriteID int64
+	BVID       string
+	Succeeded  bool
+	Reason     string
 }
 
 type ItemFailure struct {
@@ -163,9 +190,11 @@ type ProgressEvent struct {
 	Match     *MatchResult
 	// Outcome contains the complete per-song match state for EventSong. Match
 	// remains the selected candidate for compatibility with existing observers.
-	Outcome   *MatchResult
-	QRPayload string
-	At        time.Time
+	Outcome *MatchResult
+	// WriteReceipt is set on EventVideo for each favorite-write attempt.
+	WriteReceipt *WriteReceipt
+	QRPayload    string
+	At           time.Time
 }
 
 type Observer interface {

@@ -167,6 +167,14 @@ type AddResult struct {
 	Failed     []AddFailure
 }
 
+// WriteReceipt reports the durable result of one favorite-write attempt.
+type WriteReceipt struct {
+	FavoriteID int64
+	BVID       string
+	Succeeded  bool
+	Reason     string
+}
+
 type LoginUpdate struct {
 	QRPayload string
 	Status    string
@@ -210,6 +218,12 @@ type AccountClient interface {
 	ListFavorites(ctx context.Context) ([]model.Favorite, error)
 	CreateFavorite(ctx context.Context, request CreateFavoriteRequest) (model.Favorite, error)
 	AddToFavorite(ctx context.Context, favoriteID int64, videos []model.Video) (AddResult, error)
+}
+
+// AccountClientWithWriteReceipts is implemented by account clients that can
+// report each favorite write as soon as the remote request completes.
+type AccountClientWithWriteReceipts interface {
+	AddToFavoriteWithReceipts(ctx context.Context, favoriteID int64, videos []model.Video, receipt func(WriteReceipt)) (AddResult, error)
 }
 
 type MatchStrategy interface {
