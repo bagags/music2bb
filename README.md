@@ -186,6 +186,8 @@ go vet ./...
 MUSIC2BB_TEST_KUGOU_URL='<playlist-url>' \
 MUSIC2BB_TEST_APPLE_MUSIC_URL='<apple-music-playlist-url>' \
 MUSIC2BB_TEST_BVID='BV1xx411c7mD' \
+MUSIC2BB_TEST_SEARCH_QUERY='贝多芬 第五交响曲' \
+MUSIC2BB_TEST_COOKIE_FILE='/path/to/bilibili.json' \
 go test -count=1 -tags=live ./internal/kugou ./internal/applemusic ./internal/bilibili
 ```
 

@@ -64,26 +64,48 @@ func writeJSON(w http.ResponseWriter, data []byte) {
 	w.Write(data)
 }
 
-func TestSearchUsesOnlyFingerprintCookiesAndDeduplicatesConcurrentRequests(t *testing.T) {
+func TestDefaultSearchEndpointUsesTypedWBIAPI(t *testing.T) {
+	if got, want := DefaultEndpoints().Search, "https://api.bilibili.com/x/web-interface/wbi/search/type"; got != want {
+		t.Fatalf("search endpoint = %q, want %q", got, want)
+	}
+}
+
+func TestSearchUsesFirstPartySessionCookiesAndDeduplicatesConcurrentRequests(t *testing.T) {
 	var searchCalls atomic.Int32
 	searchFixture := fixture(t, "search.json")
+	navFixture := fixture(t, "nav.json")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/home":
 			http.SetCookie(w, &http.Cookie{Name: "buvid3", Value: "fingerprint", Path: "/"})
+			http.SetCookie(w, &http.Cookie{Name: "b_nut", Value: "anonymous", Path: "/"})
 			http.SetCookie(w, &http.Cookie{Name: "SESSDATA", Value: "secret", Path: "/"})
 			http.SetCookie(w, &http.Cookie{Name: "bili_jct", Value: "csrf", Path: "/"})
 			w.WriteHeader(http.StatusOK)
+		case "/nav":
+			writeJSON(w, navFixture)
 		case "/search":
 			searchCalls.Add(1)
 			if cookie, err := r.Cookie("buvid3"); err != nil || cookie.Value != "fingerprint" {
 				t.Errorf("search fingerprint cookie = %v, %v", cookie, err)
 			}
-			if _, err := r.Cookie("SESSDATA"); err == nil {
-				t.Error("authenticated SESSDATA leaked into search request")
+			if cookie, err := r.Cookie("b_nut"); err != nil || cookie.Value != "anonymous" {
+				t.Errorf("search anonymous cookie = %v, %v", cookie, err)
 			}
-			if _, err := r.Cookie("bili_jct"); err == nil {
-				t.Error("CSRF cookie leaked into search request")
+			if cookie, err := r.Cookie("SESSDATA"); err != nil || cookie.Value != "secret" {
+				t.Errorf("search session cookie = %v, %v", cookie, err)
+			}
+			if cookie, err := r.Cookie("bili_jct"); err != nil || cookie.Value != "csrf" {
+				t.Errorf("search CSRF cookie = %v, %v", cookie, err)
+			}
+			if got := r.URL.Query().Get("keyword"); got != "中文 fixture" {
+				t.Errorf("search keyword = %q", got)
+			}
+			if got := r.URL.Query().Get("search_type"); got != "video" {
+				t.Errorf("search type = %q", got)
+			}
+			if r.URL.Query().Get("wts") == "" || r.URL.Query().Get("w_rid") == "" {
+				t.Errorf("search query is unsigned: %v", r.URL.Query())
 			}
 			writeJSON(w, searchFixture)
 		default:
@@ -91,7 +113,7 @@ func TestSearchUsesOnlyFingerprintCookiesAndDeduplicatesConcurrentRequests(t *te
 		}
 	}))
 	defer server.Close()
-	client := testClient(t, server, Config{})
+	client := testClient(t, server, Config{Now: func() time.Time { return time.Unix(1702204169, 0) }})
 
 	const goroutines = 12
 	results := make([][]model.Video, goroutines)
@@ -101,7 +123,7 @@ func TestSearchUsesOnlyFingerprintCookiesAndDeduplicatesConcurrentRequests(t *te
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			results[index], errs[index] = client.Search(context.Background(), "fixture", SearchOptions{})
+			results[index], errs[index] = client.Search(context.Background(), "中文 fixture", SearchOptions{})
 		}()
 	}
 	wg.Wait()
@@ -117,7 +139,7 @@ func TestSearchUsesOnlyFingerprintCookiesAndDeduplicatesConcurrentRequests(t *te
 		t.Fatalf("parsed video = %#v", got)
 	}
 	results[0][0].Tags[0] = "mutated"
-	cached, err := client.Search(context.Background(), "fixture", SearchOptions{})
+	cached, err := client.Search(context.Background(), "中文 fixture", SearchOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,6 +149,7 @@ func TestSearchUsesOnlyFingerprintCookiesAndDeduplicatesConcurrentRequests(t *te
 }
 
 func TestCookiePersistenceIsPythonCompatible(t *testing.T) {
+	navFixture := fixture(t, "nav.json")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/home" {
 			http.SetCookie(w, &http.Cookie{Name: "buvid3", Value: "persisted", Path: "/"})
@@ -135,6 +158,10 @@ func TestCookiePersistenceIsPythonCompatible(t *testing.T) {
 		}
 		if r.URL.Path == "/search" {
 			writeJSON(w, fixture(t, "search.json"))
+			return
+		}
+		if r.URL.Path == "/nav" {
+			writeJSON(w, navFixture)
 			return
 		}
 		http.NotFound(w, r)
@@ -223,6 +250,96 @@ func TestWBISigningMatchesReferenceVector(t *testing.T) {
 	}
 	if params.Get("wts") != "" {
 		t.Fatal("signWBI mutated its input")
+	}
+}
+
+func TestWBISigningPreservesUnicodeAndSpaces(t *testing.T) {
+	params := url.Values{"keyword": {"贝多芬! 第五(交响)*曲'"}}
+	signed := signWBI(params, "7cd084941338484aae1ad9425b84077c", "4932caff0ff746eab6f01bf08b70ac45", 1702204169)
+	if got, want := signed.Get("keyword"), "贝多芬 第五交响曲"; got != want {
+		t.Fatalf("signed keyword = %q, want %q", got, want)
+	}
+	if got := params.Get("keyword"); got != "贝多芬! 第五(交响)*曲'" {
+		t.Fatalf("signWBI mutated original keyword: %q", got)
+	}
+	if signed.Get("w_rid") == "" || signed.Get("wts") != "1702204169" {
+		t.Fatalf("signed params = %v", signed)
+	}
+}
+
+func TestWBIKeysAcceptAnonymousNavDataWithoutWeakeningAccountChecks(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/nav" {
+			http.NotFound(w, r)
+			return
+		}
+		io.WriteString(w, `{"code":-101,"message":"账号未登录","data":{"isLogin":false,"wbi_img":{"img_url":"https://i/7cd084941338484aae1ad9425b84077c.png","sub_url":"https://i/4932caff0ff746eab6f01bf08b70ac45.png"}}}`)
+	}))
+	defer server.Close()
+	client := testClient(t, server, Config{})
+
+	img, sub, err := client.wbiKeys(context.Background())
+	if err != nil || img != "7cd084941338484aae1ad9425b84077c" || sub != "4932caff0ff746eab6f01bf08b70ac45" {
+		t.Fatalf("wbiKeys = %q, %q, %v", img, sub, err)
+	}
+	_, err = client.Account(context.Background())
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || apiErr.Code != -101 {
+		t.Fatalf("Account error = %T %v", err, err)
+	}
+}
+
+func TestHTTPErrorPreservesBilibiliDetails(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/detail" {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("x-sec-request-id", "request-412")
+		w.WriteHeader(http.StatusPreconditionFailed)
+		io.WriteString(w, `{"code":-412,"message":"request was banned","ttl":1}`)
+	}))
+	defer server.Close()
+	client := testClient(t, server, Config{})
+
+	_, err := client.VideoDetail(context.Background(), "BV1fixture")
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("VideoDetail error = %T %v", err, err)
+	}
+	if apiErr.StatusCode != http.StatusPreconditionFailed || apiErr.Code != -412 || apiErr.Message != "request was banned" || apiErr.RequestID != "request-412" {
+		t.Fatalf("APIError = %#v", apiErr)
+	}
+	if got, want := err.Error(), "bilibili video detail: HTTP 412, code -412: request was banned (request request-412)"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
+	}
+}
+
+func TestSearchReportsGaiaRiskControlVoucher(t *testing.T) {
+	navFixture := fixture(t, "nav.json")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/home":
+			http.SetCookie(w, &http.Cookie{Name: "buvid3", Value: "fingerprint", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case "/nav":
+			writeJSON(w, navFixture)
+		case "/search":
+			io.WriteString(w, `{"code":0,"message":"OK","data":{"v_voucher":"opaque-challenge"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := testClient(t, server, Config{})
+
+	_, err := client.Search(context.Background(), "fixture", SearchOptions{})
+	var apiErr *APIError
+	if !errors.As(err, &apiErr) || !apiErr.RiskControl || !apiErr.BatchFatal() {
+		t.Fatalf("Search error = %T %#v", err, err)
+	}
+	if got, want := err.Error(), "bilibili search: risk-control challenge required"; got != want {
+		t.Fatalf("error = %q, want %q", got, want)
 	}
 }
 

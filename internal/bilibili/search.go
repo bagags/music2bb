@@ -16,7 +16,7 @@ type searchKey struct {
 	Query      string
 	Page       int
 	PageSize   int
-	SearchType int
+	SearchType string
 	Order      string
 }
 
@@ -28,7 +28,8 @@ type searchFlight struct {
 var htmlTagPattern = regexp.MustCompile(`<[^>]*>`)
 
 type searchData struct {
-	Result []json.RawMessage `json:"result"`
+	Result  []json.RawMessage `json:"result"`
+	Voucher string            `json:"v_voucher"`
 }
 
 type searchBlock struct {
@@ -67,8 +68,8 @@ func (c *Client) Search(ctx context.Context, query string, options SearchOptions
 	if options.PageSize <= 0 {
 		options.PageSize = 20
 	}
-	if options.SearchType <= 0 {
-		options.SearchType = 1
+	if options.SearchType == "" {
+		options.SearchType = "video"
 	}
 	if options.Order == "" {
 		options.Order = "totalrank"
@@ -116,12 +117,19 @@ func (c *Client) searchUncached(ctx context.Context, query string, options Searc
 		"keyword":     {query},
 		"page":        {strconv.Itoa(options.Page)},
 		"page_size":   {strconv.Itoa(options.PageSize)},
-		"search_type": {strconv.Itoa(options.SearchType)},
+		"search_type": {options.SearchType},
 		"order":       {options.Order},
 	}
-	var data searchData
-	if err := c.get(ctx, c.search, "search", c.endpoints.Search, params, &data); err != nil {
+	signed, err := c.SignWBI(ctx, params)
+	if err != nil {
 		return nil, err
+	}
+	var data searchData
+	if err := c.get(ctx, c.search, "search", c.endpoints.Search, signed, &data); err != nil {
+		return nil, err
+	}
+	if data.Voucher != "" && len(data.Result) == 0 {
+		return nil, &APIError{Operation: "search", Message: "risk-control challenge required", RiskControl: true}
 	}
 	items := make([]searchVideo, 0)
 	for _, raw := range data.Result {

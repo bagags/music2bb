@@ -129,6 +129,9 @@ func (c *Client) applyCookieString(raw string) {
 		cookies = append(cookies, &http.Cookie{Name: name, Value: value, Domain: domain, Path: "/"})
 	}
 	c.accountJar.SetCookies(u, cookies)
+	c.fingerprintMu.Lock()
+	c.fingerprintReady = false
+	c.fingerprintMu.Unlock()
 }
 
 func (c *Client) csrf() string {
@@ -149,16 +152,21 @@ func (c *Client) csrf() string {
 func (c *Client) ensureFingerprint(ctx context.Context) error {
 	c.fingerprintMu.Lock()
 	defer c.fingerprintMu.Unlock()
-	if c.fingerprintReady {
-		return nil
-	}
 	home, err := url.Parse(c.endpoints.Home)
 	if err != nil {
 		return err
 	}
+	searchURL, err := url.Parse(c.endpoints.Search)
+	if err != nil {
+		return err
+	}
+	if c.fingerprintReady {
+		c.syncSearchCookies(searchURL)
+		return nil
+	}
 	found := false
 	for _, cookie := range c.accountJar.Cookies(home) {
-		if cookie.Name == "buvid3" || cookie.Name == "buvid4" {
+		if isBilibiliDeviceID(cookie.Name) {
 			found = true
 		}
 	}
@@ -178,15 +186,24 @@ func (c *Client) ensureFingerprint(ctx context.Context) error {
 		}
 		_ = c.SaveCookies()
 	}
-	searchURL, err := url.Parse(c.endpoints.Search)
-	if err != nil {
-		return err
-	}
-	for _, cookie := range c.accountJar.Cookies(home) {
-		if cookie.Name == "buvid3" || cookie.Name == "buvid4" {
-			c.searchJar.SetCookies(searchURL, []*http.Cookie{{Name: cookie.Name, Value: cookie.Value, Path: "/"}})
-		}
-	}
+	// Bilibili's typed search may return a Gaia challenge for an anonymous
+	// request even when the same signed request succeeds in the logged-in web
+	// session. Mirror only cookies applicable to the configured first-party
+	// search URL; cookiejar domain filtering prevents cross-site disclosure.
+	c.syncSearchCookies(searchURL)
 	c.fingerprintReady = true
 	return nil
+}
+
+func (c *Client) syncSearchCookies(searchURL *url.URL) {
+	for _, cookie := range c.searchJar.Cookies(searchURL) {
+		c.searchJar.SetCookies(searchURL, []*http.Cookie{{Name: cookie.Name, Value: "", Path: "/", MaxAge: -1}})
+	}
+	for _, cookie := range c.accountJar.Cookies(searchURL) {
+		c.searchJar.SetCookies(searchURL, []*http.Cookie{{Name: cookie.Name, Value: cookie.Value, Path: "/"}})
+	}
+}
+
+func isBilibiliDeviceID(name string) bool {
+	return name == "buvid3" || name == "buvid4"
 }

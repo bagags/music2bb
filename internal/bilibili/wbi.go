@@ -20,7 +20,7 @@ var wbiMixinTable = [...]int{
 	22, 25, 54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
 }
 
-var wbiUnsafe = regexp.MustCompile(`[^A-Za-z0-9_!'()*\.\-]`)
+var wbiUnsafe = regexp.MustCompile(`[!'()*]`)
 
 func mixinKey(original string) string {
 	var builder strings.Builder
@@ -73,7 +73,10 @@ func (c *Client) wbiKeys(ctx context.Context) (string, string, error) {
 		return c.wbiImgKey, c.wbiSubKey, nil
 	}
 	var data navData
-	if err := c.get(ctx, c.account, "wbi keys", c.endpoints.Nav, nil, &data); err != nil {
+	// Anonymous NAV responses use code -101 while still returning public WBI
+	// image keys in data. Only key retrieval accepts that code; Account keeps
+	// treating it as an authentication failure.
+	if err := c.getAllowCode(ctx, c.account, "wbi keys", c.endpoints.Nav, nil, &data, -101); err != nil {
 		return "", "", err
 	}
 	img := strings.TrimSuffix(path.Base(data.WBIImg.ImgURL), path.Ext(data.WBIImg.ImgURL))

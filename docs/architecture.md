@@ -59,6 +59,11 @@ consumers outside this module.
 | `internal/catalogue` | Embedded versioned classical-catalogue symbols, strict registry validation, and normalized reference parsing |
 | `internal/netx` | Shared HTTP retry, concurrency, and rate-limit behavior |
 
+Bilibili video search uses the typed WBI endpoint with Unicode-safe signing and
+the stored first-party session context. HTTP/API rejection details remain typed
+errors, and a Gaia risk-control voucher is reported as a challenge rather than
+misrepresented as an empty search result.
+
 ## Public and internal data
 
 The root package returns public snapshots rather than exposing internal models

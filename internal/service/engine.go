@@ -98,8 +98,13 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 	if opts.Workers > len(songs) {
 		opts.Workers = len(songs)
 	}
+	matchCtx, cancelMatch := context.WithCancelCause(ctx)
+	defer cancelMatch(nil)
 	updates := serial(observer, e.now)
 	outcomes := make([]MatchOutcome, len(songs))
+	for index, song := range songs {
+		outcomes[index] = MatchOutcome{Song: song, NeedsReview: true, ReviewReason: model.ReviewSearchFailed}
+	}
 	jobs := make(chan int)
 	var progressMu sync.Mutex
 	completed := 0
@@ -109,11 +114,14 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 		go func() {
 			defer workers.Done()
 			for index := range jobs {
-				outcome := e.matchSong(ctx, strategy, songs[index], opts)
+				outcome, fatalErr := e.matchSong(matchCtx, strategy, songs[index], opts)
 				if outcome.Failure != nil {
 					outcome.Failure.Index = index
 				}
 				outcomes[index] = outcome
+				if fatalErr != nil {
+					cancelMatch(fatalErr)
+				}
 				progressMu.Lock()
 				completed++
 				event := ProgressEvent{Kind: EventSong, Operation: "match", Current: completed, Total: len(songs), Song: &outcomes[index].Song}
@@ -130,7 +138,7 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 	for index := range songs {
 		select {
 		case jobs <- index:
-		case <-ctx.Done():
+		case <-matchCtx.Done():
 			feedCancelled = true
 		}
 		if feedCancelled {
@@ -155,7 +163,7 @@ func (e *Engine) Match(ctx context.Context, songs []model.Song, opts MatchOption
 	return outcomes, nil
 }
 
-func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song model.Song, opts MatchOptions) MatchOutcome {
+func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song model.Song, opts MatchOptions) (MatchOutcome, error) {
 	outcome := MatchOutcome{Song: song}
 	phases := strategy.QueryPhases(song)
 	allVideos := make([]model.Video, 0)
@@ -171,10 +179,22 @@ func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song mod
 				if err != nil {
 					lastSearchErr = err
 					if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+						cause := context.Cause(ctx)
+						if cause != nil && !errors.Is(cause, context.Canceled) && !errors.Is(cause, context.DeadlineExceeded) {
+							outcome.NeedsReview = true
+							outcome.ReviewReason = model.ReviewSearchFailed
+							return outcome, nil
+						}
 						outcome.Failure = &ItemFailure{Operation: "search", Item: song.Name, Reason: err.Error()}
 						outcome.NeedsReview = true
 						outcome.ReviewReason = model.ReviewSearchFailed
-						return outcome
+						return outcome, nil
+					}
+					if isBatchFatal(err) {
+						outcome.Failure = &ItemFailure{Operation: "search", Item: song.Name, Reason: err.Error()}
+						outcome.NeedsReview = true
+						outcome.ReviewReason = model.ReviewSearchFailed
+						return outcome, err
 					}
 					continue
 				}
@@ -197,7 +217,7 @@ func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song mod
 		if decision.SelectedIndex >= 0 && decision.SelectedIndex < len(ranked) {
 			outcome.Selected = ranked[decision.SelectedIndex]
 			outcome.HasSelection = outcome.Selected.Video != nil
-			return outcome
+			return outcome, nil
 		}
 		outcome.ReviewReason = decision.ReviewReason
 		if !decision.Continue {
@@ -213,7 +233,15 @@ func (e *Engine) matchSong(ctx context.Context, strategy MatchStrategy, song mod
 		}
 	}
 	outcome.NeedsReview = true
-	return outcome
+	return outcome, nil
+}
+
+func isBatchFatal(err error) bool {
+	type batchFatal interface {
+		BatchFatal() bool
+	}
+	var fatal batchFatal
+	return errors.As(err, &fatal) && fatal.BatchFatal()
 }
 
 func retainCandidates(ranked []model.MatchResult, limit int) []model.MatchResult {

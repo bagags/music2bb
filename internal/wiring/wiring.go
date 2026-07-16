@@ -221,7 +221,7 @@ func (a *bilibiliAdapter) Login(ctx context.Context, options service.LoginOption
 }
 
 func (a *bilibiliAdapter) SearchVideos(ctx context.Context, query string, page, pageSize int) ([]model.Video, error) {
-	return a.client.Search(ctx, query, bilibili.SearchOptions{Page: page, PageSize: pageSize, SearchType: 1, Order: "totalrank"})
+	return a.client.Search(ctx, query, bilibili.SearchOptions{Page: page, PageSize: pageSize, SearchType: "video", Order: "totalrank"})
 }
 
 func (a *bilibiliAdapter) VideoDetail(ctx context.Context, bvid string) (model.Video, error) {

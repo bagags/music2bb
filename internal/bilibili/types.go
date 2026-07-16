@@ -34,7 +34,7 @@ func DefaultEndpoints() Endpoints {
 	return Endpoints{
 		Home:                 "https://www.bilibili.com/",
 		Nav:                  "https://api.bilibili.com/x/web-interface/nav",
-		Search:               "https://api.bilibili.com/x/web-interface/search/all/v2",
+		Search:               "https://api.bilibili.com/x/web-interface/wbi/search/type",
 		VideoDetail:          "https://api.bilibili.com/x/web-interface/view",
 		QRGenerate:           "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
 		QRPoll:               "https://passport.bilibili.com/x/passport-login/web/qrcode/poll",
@@ -154,7 +154,7 @@ type LoginOptions struct {
 type SearchOptions struct {
 	Page       int
 	PageSize   int
-	SearchType int
+	SearchType string
 	Order      string
 }
 
@@ -200,27 +200,48 @@ type FavoriteResource struct {
 }
 
 type APIError struct {
-	Operation  string
-	StatusCode int
-	Code       int64
-	Message    string
-	Err        error
+	Operation   string
+	StatusCode  int
+	Code        int64
+	Message     string
+	RequestID   string
+	RiskControl bool
+	Err         error
 }
 
 func (e *APIError) Error() string {
 	if e == nil {
 		return "<nil>"
 	}
+	suffix := ""
+	if e.RequestID != "" {
+		suffix = fmt.Sprintf(" (request %s)", e.RequestID)
+	}
+	if e.StatusCode != 0 && e.Message != "" && e.Code != 0 {
+		return fmt.Sprintf("bilibili %s: HTTP %d, code %d: %s%s", e.Operation, e.StatusCode, e.Code, e.Message, suffix)
+	}
+	if e.StatusCode != 0 && e.Message != "" {
+		return fmt.Sprintf("bilibili %s: HTTP %d: %s%s", e.Operation, e.StatusCode, e.Message, suffix)
+	}
 	if e.Message != "" {
-		return fmt.Sprintf("bilibili %s: %s (code %d)", e.Operation, e.Message, e.Code)
+		if e.Code != 0 {
+			return fmt.Sprintf("bilibili %s: %s (code %d)%s", e.Operation, e.Message, e.Code, suffix)
+		}
+		return fmt.Sprintf("bilibili %s: %s%s", e.Operation, e.Message, suffix)
 	}
 	if e.StatusCode != 0 {
-		return fmt.Sprintf("bilibili %s: HTTP %d", e.Operation, e.StatusCode)
+		return fmt.Sprintf("bilibili %s: HTTP %d%s", e.Operation, e.StatusCode, suffix)
 	}
-	return fmt.Sprintf("bilibili %s: %v", e.Operation, e.Err)
+	return fmt.Sprintf("bilibili %s: %v%s", e.Operation, e.Err, suffix)
 }
 
 func (e *APIError) Unwrap() error { return e.Err }
+
+// BatchFatal reports request-contract or risk-control failures that should stop
+// a multi-song search rather than repeating the same rejected request.
+func (e *APIError) BatchFatal() bool {
+	return e != nil && e.Operation == "search" && (e.RiskControl || e.StatusCode == http.StatusPreconditionFailed || e.Code == -412 || e.Code == -1200)
+}
 
 func sleepContext(ctx context.Context, delay time.Duration) error {
 	timer := time.NewTimer(delay)

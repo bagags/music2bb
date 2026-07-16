@@ -170,6 +170,27 @@ type burstSearch struct {
 	once    sync.Once
 }
 
+type batchFatalSearchError struct{}
+
+func (batchFatalSearchError) Error() string    { return "provider rejected search request" }
+func (batchFatalSearchError) BatchFatal() bool { return true }
+
+type rejectingSearch struct {
+	calls atomic.Int32
+}
+
+func (s *rejectingSearch) SearchVideos(ctx context.Context, _ string, _, _ int) ([]model.Video, error) {
+	if s.calls.Add(1) == 1 {
+		return nil, batchFatalSearchError{}
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (*rejectingSearch) VideoDetail(context.Context, string) (model.Video, error) {
+	return model.Video{}, nil
+}
+
 func (s *burstSearch) SearchVideos(context.Context, string, int, int) ([]model.Video, error) {
 	if s.ready.Add(1) == s.total {
 		s.once.Do(func() { close(s.release) })
@@ -231,6 +252,44 @@ func TestMatchBoundsWorkersAndPreservesOrder(t *testing.T) {
 		if len(outcome.Candidates) != 1 || !outcome.HasSelection {
 			t.Fatalf("outcome %d did not retain/select candidates: %#v", index, outcome)
 		}
+	}
+}
+
+func TestMatchStopsBatchAfterFatalSearchRejection(t *testing.T) {
+	search := &rejectingSearch{}
+	account := &fakeRemote{}
+	engine, err := New(Dependencies{
+		Playlist: fakePlaylist{}, Match: search, Account: account, Strategy: fakeMatcher{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	songs := make([]model.Song, 50)
+	for index := range songs {
+		songs[index] = model.Song{Name: fmt.Sprintf("song-%02d", index), Artist: "artist"}
+	}
+	outcomes, err := engine.Match(context.Background(), songs, MatchOptions{Workers: 4, SearchPages: 3}, nil)
+	var batch *BatchError
+	if !errors.As(err, &batch) || batch.Category != ErrorNetwork || len(batch.Failures) != 1 {
+		t.Fatalf("Match error = %T %#v", err, err)
+	}
+	if calls := search.calls.Load(); calls > 4 {
+		t.Fatalf("search calls = %d, want at most one per active worker", calls)
+	}
+	if len(outcomes) != len(songs) {
+		t.Fatalf("outcomes = %d, want %d", len(outcomes), len(songs))
+	}
+	failed := 0
+	for index, outcome := range outcomes {
+		if outcome.Song.Name != songs[index].Name {
+			t.Fatalf("outcome %d song = %q, want %q", index, outcome.Song.Name, songs[index].Name)
+		}
+		if outcome.Failure != nil {
+			failed++
+		}
+	}
+	if failed != 1 {
+		t.Fatalf("failed outcomes = %d, want one rejection and unattempted snapshots", failed)
 	}
 }
 
