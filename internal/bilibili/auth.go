@@ -3,10 +3,11 @@ package bilibili
 import (
 	"context"
 	"net/http"
-	"net/http/cookiejar"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/bagags/music2bb-go/internal/netx"
 )
 
 type navData struct {
@@ -43,25 +44,13 @@ func (c *Client) Logout(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	searchJar, err := cookiejar.New(nil)
-	if err != nil {
-		return err
-	}
 	if err := c.cookieStore.Clear(); err != nil {
 		return err
 	}
 	c.accountJar = accountJar
-	c.searchJar = searchJar
 	c.account.HTTP.Jar = accountJar
-	c.search.HTTP.Jar = searchJar
-	c.fingerprintMu.Lock()
-	c.fingerprintReady = false
-	c.fingerprintMu.Unlock()
-	c.wbiMu.Lock()
-	c.wbiImgKey = ""
-	c.wbiSubKey = ""
-	c.wbiAt = time.Time{}
-	c.wbiMu.Unlock()
+	c.sessionSearch.HTTP.Jar = accountJar
+	c.resetIdentityState(SearchIdentitySession)
 	return nil
 }
 
@@ -162,9 +151,7 @@ func (c *Client) applyCookieString(raw string) {
 		cookies = append(cookies, &http.Cookie{Name: name, Value: value, Domain: domain, Path: "/"})
 	}
 	c.accountJar.SetCookies(u, cookies)
-	c.fingerprintMu.Lock()
-	c.fingerprintReady = false
-	c.fingerprintMu.Unlock()
+	c.resetIdentityState(SearchIdentitySession)
 }
 
 func (c *Client) csrf() string {
@@ -182,23 +169,28 @@ func (c *Client) csrf() string {
 	return ""
 }
 
-func (c *Client) ensureFingerprint(ctx context.Context) error {
+func (c *Client) ensureFingerprint(ctx context.Context, identity SearchIdentity) error {
 	c.fingerprintMu.Lock()
 	defer c.fingerprintMu.Unlock()
 	home, err := url.Parse(c.endpoints.Home)
 	if err != nil {
 		return err
 	}
-	searchURL, err := url.Parse(c.endpoints.Search)
-	if err != nil {
-		return err
-	}
-	if c.fingerprintReady {
-		c.syncSearchCookies(searchURL)
+	if c.fingerprintReady[identity] {
+		if identity == SearchIdentityAnonymous {
+			c.sanitizeAnonymousJar(home)
+		}
 		return nil
 	}
+	jar := c.accountJar
+	client := c.account
+	if identity == SearchIdentityAnonymous {
+		jar = c.searchJar
+		client = c.search
+		c.sanitizeAnonymousJar(home)
+	}
 	found := false
-	for _, cookie := range c.accountJar.Cookies(home) {
+	for _, cookie := range jar.Cookies(home) {
 		if isBilibiliDeviceID(cookie.Name) {
 			found = true
 		}
@@ -209,32 +201,56 @@ func (c *Client) ensureFingerprint(ctx context.Context) error {
 			return err
 		}
 		c.addHeaders(req)
-		resp, err := c.account.Do(req)
+		resp, err := client.Do(req)
 		if err != nil {
 			return err
 		}
 		resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 400 {
-			return &APIError{Operation: "fingerprint", StatusCode: resp.StatusCode}
+			apiErr := &APIError{Operation: "fingerprint", StatusCode: resp.StatusCode}
+			classifyRiskControl(apiErr)
+			return apiErr
 		}
-		_ = c.SaveCookies()
+		if identity == SearchIdentityAnonymous {
+			c.sanitizeAnonymousJar(home)
+			_ = c.SaveAnonymousCookies()
+		} else {
+			_ = c.SaveCookies()
+		}
 	}
-	// Bilibili's typed search may return a Gaia challenge for an anonymous
-	// request even when the same signed request succeeds in the logged-in web
-	// session. Mirror only cookies applicable to the configured first-party
-	// search URL; cookiejar domain filtering prevents cross-site disclosure.
-	c.syncSearchCookies(searchURL)
-	c.fingerprintReady = true
+	c.fingerprintReady[identity] = true
 	return nil
 }
 
-func (c *Client) syncSearchCookies(searchURL *url.URL) {
-	for _, cookie := range c.searchJar.Cookies(searchURL) {
-		c.searchJar.SetCookies(searchURL, []*http.Cookie{{Name: cookie.Name, Value: "", Path: "/", MaxAge: -1}})
+func (c *Client) sanitizeAnonymousJar(home *url.URL) {
+	snapshot := c.searchJar.snapshot()
+	records := filterAnonymousCookies(snapshot)
+	if len(records) == len(snapshot) {
+		return
 	}
-	for _, cookie := range c.accountJar.Cookies(searchURL) {
-		c.searchJar.SetCookies(searchURL, []*http.Cookie{{Name: cookie.Name, Value: cookie.Value, Path: "/"}})
+	jar, err := newAnonymousJar()
+	if err != nil {
+		return
 	}
+	jar.load(records, home)
+	c.searchJar = jar
+	c.search.HTTP.Jar = jar
+}
+
+func (c *Client) searchClient(identity SearchIdentity) *netx.Client {
+	if identity == SearchIdentitySession {
+		return c.sessionSearch
+	}
+	return c.search
+}
+
+func (c *Client) resetIdentityState(identity SearchIdentity) {
+	c.fingerprintMu.Lock()
+	c.fingerprintReady[identity] = false
+	c.fingerprintMu.Unlock()
+	c.wbiMu.Lock()
+	delete(c.wbi, identity)
+	c.wbiMu.Unlock()
 }
 
 func isBilibiliDeviceID(name string) bool {

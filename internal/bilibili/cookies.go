@@ -24,6 +24,7 @@ type persistentJar struct {
 	jar     *cookiejar.Jar
 	mu      sync.Mutex
 	records map[string]CookieRecord
+	accept  func(string) bool
 }
 
 func newPersistentJar() (*persistentJar, error) {
@@ -34,9 +35,27 @@ func newPersistentJar() (*persistentJar, error) {
 	return &persistentJar{jar: jar, records: make(map[string]CookieRecord)}, nil
 }
 
+func newAnonymousJar() (*persistentJar, error) {
+	jar, err := newPersistentJar()
+	if err != nil {
+		return nil, err
+	}
+	jar.accept = func(name string) bool { return !isAccountCookie(name) }
+	return jar, nil
+}
+
 func (j *persistentJar) Cookies(u *url.URL) []*http.Cookie { return j.jar.Cookies(u) }
 
 func (j *persistentJar) SetCookies(u *url.URL, cookies []*http.Cookie) {
+	if j.accept != nil {
+		filtered := make([]*http.Cookie, 0, len(cookies))
+		for _, cookie := range cookies {
+			if j.accept(cookie.Name) {
+				filtered = append(filtered, cookie)
+			}
+		}
+		cookies = filtered
+	}
 	j.jar.SetCookies(u, cookies)
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -116,9 +135,7 @@ func (c *Client) LoadCookies() (bool, error) {
 		return false, err
 	}
 	c.accountJar.load(records, home)
-	c.fingerprintMu.Lock()
-	c.fingerprintReady = false
-	c.fingerprintMu.Unlock()
+	c.resetIdentityState(SearchIdentitySession)
 	return true, nil
 }
 
@@ -127,6 +144,33 @@ func (c *Client) SaveCookies() error {
 		return nil
 	}
 	return c.cookieStore.Save(c.accountJar.snapshot())
+}
+
+func (c *Client) SaveAnonymousCookies() error {
+	if c.anonymousCookieStore == nil {
+		return nil
+	}
+	return c.anonymousCookieStore.Save(filterAnonymousCookies(c.searchJar.snapshot()))
+}
+
+func filterAnonymousCookies(records []CookieRecord) []CookieRecord {
+	filtered := make([]CookieRecord, 0, len(records))
+	for _, record := range records {
+		if isAccountCookie(record.Name) {
+			continue
+		}
+		filtered = append(filtered, record)
+	}
+	return filtered
+}
+
+func isAccountCookie(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "sessdata", "bili_jct", "dedeuserid", "dedeuserid__ckmd5", "sid", "bili_ticket", "bili_ticket_expires":
+		return true
+	default:
+		return false
+	}
 }
 
 type fileCookieStore struct {

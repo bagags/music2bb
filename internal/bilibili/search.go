@@ -18,6 +18,7 @@ type searchKey struct {
 	PageSize   int
 	SearchType string
 	Order      string
+	Identity   SearchIdentity
 }
 
 type searchFlight struct {
@@ -74,9 +75,20 @@ func (c *Client) Search(ctx context.Context, query string, options SearchOptions
 	if options.Order == "" {
 		options.Order = "totalrank"
 	}
-	key := searchKey{Query: query, Page: options.Page, PageSize: options.PageSize, SearchType: options.SearchType, Order: options.Order}
-	if videos, ok := c.cached(key); ok {
-		return videos, nil
+	if options.Identity == "" {
+		options.Identity = SearchIdentityAnonymous
+	}
+	if options.Identity != SearchIdentityAnonymous && options.Identity != SearchIdentitySession {
+		return nil, &APIError{Operation: "search", Message: "unknown search identity " + string(options.Identity)}
+	}
+	key := searchKey{Query: query, Page: options.Page, PageSize: options.PageSize, SearchType: options.SearchType, Order: options.Order, Identity: options.Identity}
+	if options.CachePolicy != SearchCacheBypass {
+		if videos, ok := c.cached(key); ok {
+			return videos, nil
+		}
+	}
+	if options.CachePolicy == SearchCacheBypass {
+		return c.searchUncached(ctx, query, options)
 	}
 
 	c.cacheMu.Lock()
@@ -110,7 +122,7 @@ func (c *Client) Search(ctx context.Context, query string, options SearchOptions
 }
 
 func (c *Client) searchUncached(ctx context.Context, query string, options SearchOptions) ([]model.Video, error) {
-	if err := c.ensureFingerprint(ctx); err != nil {
+	if err := c.ensureFingerprint(ctx, options.Identity); err != nil {
 		return nil, err
 	}
 	params := url.Values{
@@ -120,16 +132,19 @@ func (c *Client) searchUncached(ctx context.Context, query string, options Searc
 		"search_type": {options.SearchType},
 		"order":       {options.Order},
 	}
-	signed, err := c.SignWBI(ctx, params)
+	signed, err := c.SignWBIWithIdentity(ctx, params, options.Identity)
 	if err != nil {
 		return nil, err
 	}
 	var data searchData
-	if err := c.get(ctx, c.search, "search", c.endpoints.Search, signed, &data); err != nil {
+	if err := c.get(ctx, c.searchClient(options.Identity), "search", c.endpoints.Search, signed, &data); err != nil {
 		return nil, err
 	}
-	if data.Voucher != "" && len(data.Result) == 0 {
-		return nil, &APIError{Operation: "search", Message: "risk-control challenge required", RiskControl: true}
+	if options.Identity == SearchIdentityAnonymous {
+		_ = c.SaveAnonymousCookies()
+	}
+	if data.Voucher != "" {
+		return nil, &APIError{Operation: "search", Message: "risk-control challenge required", RiskControl: true, RiskReason: RiskControlVoucher}
 	}
 	items := make([]searchVideo, 0)
 	for _, raw := range data.Result {

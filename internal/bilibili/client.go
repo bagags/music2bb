@@ -2,7 +2,8 @@ package bilibili
 
 import (
 	"net/http"
-	"net/http/cookiejar"
+	"net/url"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -13,25 +14,25 @@ import (
 const defaultUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0.0.0 Safari/537.36"
 
 type Client struct {
-	endpoints   Endpoints
-	cookieFile  string
-	cookieStore CookieStore
-	account     *netx.Client
-	search      *netx.Client
-	accountJar  *persistentJar
-	searchJar   http.CookieJar
-	now         func() time.Time
-	sleep       netx.Sleeper
-	userAgent   string
-	writeDelay  time.Duration
+	endpoints            Endpoints
+	cookieFile           string
+	cookieStore          CookieStore
+	anonymousCookieStore CookieStore
+	account              *netx.Client
+	search               *netx.Client
+	sessionSearch        *netx.Client
+	accountJar           *persistentJar
+	searchJar            *persistentJar
+	now                  func() time.Time
+	sleep                netx.Sleeper
+	userAgent            string
+	writeDelay           time.Duration
 
 	fingerprintMu    sync.Mutex
-	fingerprintReady bool
+	fingerprintReady map[SearchIdentity]bool
 
-	wbiMu     sync.Mutex
-	wbiImgKey string
-	wbiSubKey string
-	wbiAt     time.Time
+	wbiMu sync.Mutex
+	wbi   map[SearchIdentity]wbiState
 
 	cacheMu    sync.Mutex
 	cache      map[searchKey][]model.Video
@@ -46,7 +47,7 @@ func New(config Config) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	searchJar, err := cookiejar.New(nil)
+	searchJar, err := newAnonymousJar()
 	if err != nil {
 		return nil, err
 	}
@@ -55,7 +56,12 @@ func New(config Config) (*Client, error) {
 		timeout = 20 * time.Second
 	}
 	account := netx.New(timeout, 8, config.Limiter)
-	search := netx.New(timeout, 8, config.Limiter)
+	searchLimiter := config.SearchLimiter
+	if searchLimiter == nil {
+		searchLimiter = config.Limiter
+	}
+	search := netx.New(timeout, 8, searchLimiter)
+	sessionSearch := netx.New(timeout, 8, searchLimiter)
 	if config.AccountHTTP == nil {
 		account.HTTP.Jar = accountJar
 	} else {
@@ -63,16 +69,20 @@ func New(config Config) (*Client, error) {
 	}
 	if config.SearchHTTP == nil {
 		search.HTTP.Jar = searchJar
+		sessionSearch.HTTP.Jar = accountJar
 	} else {
 		search.HTTP = cloneHTTPClient(config.SearchHTTP, timeout, searchJar)
+		sessionSearch.HTTP = cloneHTTPClient(config.SearchHTTP, timeout, accountJar)
 	}
 	if config.MaxAttempts > 0 {
 		account.MaxAttempts = config.MaxAttempts
 		search.MaxAttempts = config.MaxAttempts
+		sessionSearch.MaxAttempts = config.MaxAttempts
 	}
 	if config.Sleep != nil {
 		account.Sleep = config.Sleep
 		search.Sleep = config.Sleep
+		sessionSearch.Sleep = config.Sleep
 	}
 	now := config.Now
 	if now == nil {
@@ -94,10 +104,26 @@ func New(config Config) (*Client, error) {
 	if cookieStore == nil {
 		cookieStore = fileCookieStore{path: config.CookieFile}
 	}
+	anonymousCookieStore := CookieStore(fileCookieStore{path: config.AnonymousCookieFile})
+	if config.AnonymousCookieFile == "" && config.CookieFile != "" {
+		anonymousCookieStore = fileCookieStore{path: filepath.Join(filepath.Dir(config.CookieFile), "bilibili-anonymous.json")}
+	}
+	if anonymousCookieStore.Exists() {
+		records, loadErr := anonymousCookieStore.Load()
+		if loadErr != nil {
+			return nil, loadErr
+		}
+		home, parseErr := url.Parse(endpoints.Home)
+		if parseErr != nil {
+			return nil, parseErr
+		}
+		searchJar.load(filterAnonymousCookies(records), home)
+	}
 	return &Client{
-		endpoints: endpoints, cookieFile: config.CookieFile, cookieStore: cookieStore,
-		account: account, search: search, accountJar: accountJar, searchJar: searchJar,
+		endpoints: endpoints, cookieFile: config.CookieFile, cookieStore: cookieStore, anonymousCookieStore: anonymousCookieStore,
+		account: account, search: search, sessionSearch: sessionSearch, accountJar: accountJar, searchJar: searchJar,
 		now: now, sleep: sleep, userAgent: userAgent, writeDelay: config.WriteInterval,
+		fingerprintReady: make(map[SearchIdentity]bool), wbi: make(map[SearchIdentity]wbiState),
 		cache: make(map[searchKey][]model.Video), cacheSize: cacheSize,
 		inflight: make(map[searchKey]*searchFlight),
 	}, nil
@@ -118,4 +144,5 @@ func (c *Client) CloseIdleConnections() {
 	}
 	c.account.CloseIdleConnections()
 	c.search.CloseIdleConnections()
+	c.sessionSearch.CloseIdleConnections()
 }

@@ -70,7 +70,7 @@ func TestDefaultSearchEndpointUsesTypedWBIAPI(t *testing.T) {
 	}
 }
 
-func TestSearchUsesFirstPartySessionCookiesAndDeduplicatesConcurrentRequests(t *testing.T) {
+func TestAnonymousSearchExcludesAccountCookiesAndDeduplicatesConcurrentRequests(t *testing.T) {
 	var searchCalls atomic.Int32
 	searchFixture := fixture(t, "search.json")
 	navFixture := fixture(t, "nav.json")
@@ -92,11 +92,11 @@ func TestSearchUsesFirstPartySessionCookiesAndDeduplicatesConcurrentRequests(t *
 			if cookie, err := r.Cookie("b_nut"); err != nil || cookie.Value != "anonymous" {
 				t.Errorf("search anonymous cookie = %v, %v", cookie, err)
 			}
-			if cookie, err := r.Cookie("SESSDATA"); err != nil || cookie.Value != "secret" {
-				t.Errorf("search session cookie = %v, %v", cookie, err)
+			if cookie, err := r.Cookie("SESSDATA"); !errors.Is(err, http.ErrNoCookie) {
+				t.Errorf("anonymous search leaked session cookie = %v, %v", cookie, err)
 			}
-			if cookie, err := r.Cookie("bili_jct"); err != nil || cookie.Value != "csrf" {
-				t.Errorf("search CSRF cookie = %v, %v", cookie, err)
+			if cookie, err := r.Cookie("bili_jct"); !errors.Is(err, http.ErrNoCookie) {
+				t.Errorf("anonymous search leaked CSRF cookie = %v, %v", cookie, err)
 			}
 			if got := r.URL.Query().Get("keyword"); got != "中文 fixture" {
 				t.Errorf("search keyword = %q", got)
@@ -146,6 +146,50 @@ func TestSearchUsesFirstPartySessionCookiesAndDeduplicatesConcurrentRequests(t *
 	if cached[0].Tags[0] == "mutated" {
 		t.Fatal("cache returned an aliased tag slice")
 	}
+	anonymousPath := filepath.Join(filepath.Dir(client.cookieFile), "bilibili-anonymous.json")
+	persisted, err := os.ReadFile(anonymousPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(persisted), "SESSDATA") || strings.Contains(string(persisted), "bili_jct") || strings.Contains(string(persisted), "secret") {
+		t.Fatalf("anonymous fingerprint file contains account state: %s", persisted)
+	}
+}
+
+func TestSearchIdentityKeepsSessionAndAnonymousJarsIsolated(t *testing.T) {
+	searchFixture := fixture(t, "search.json")
+	navFixture := fixture(t, "nav.json")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/home":
+			http.SetCookie(w, &http.Cookie{Name: "buvid3", Value: "device", Path: "/"})
+			w.WriteHeader(http.StatusOK)
+		case "/nav":
+			writeJSON(w, navFixture)
+		case "/search":
+			_, sessionErr := r.Cookie("SESSDATA")
+			_, csrfErr := r.Cookie("bili_jct")
+			if r.URL.Query().Get("keyword") == "session" {
+				if sessionErr != nil || csrfErr != nil {
+					t.Errorf("session identity cookies missing: SESSDATA=%v bili_jct=%v", sessionErr, csrfErr)
+				}
+			} else if !errors.Is(sessionErr, http.ErrNoCookie) || !errors.Is(csrfErr, http.ErrNoCookie) {
+				t.Errorf("anonymous identity leaked account cookies: SESSDATA=%v bili_jct=%v", sessionErr, csrfErr)
+			}
+			writeJSON(w, searchFixture)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := testClient(t, server, Config{})
+	client.applyCookieString("SESSDATA=secret; bili_jct=csrf")
+	if _, err := client.Search(context.Background(), "session", SearchOptions{Identity: SearchIdentitySession}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Search(context.Background(), "anonymous", SearchOptions{Identity: SearchIdentityAnonymous}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestCookiePersistenceIsPythonCompatible(t *testing.T) {
@@ -171,10 +215,11 @@ func TestCookiePersistenceIsPythonCompatible(t *testing.T) {
 	if _, err := client.Search(context.Background(), "fixture", SearchOptions{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.SaveCookies(); err != nil {
+	if err := client.SaveAnonymousCookies(); err != nil {
 		t.Fatal(err)
 	}
-	data, err := os.ReadFile(client.cookieFile)
+	anonymousPath := filepath.Join(filepath.Dir(client.cookieFile), "bilibili-anonymous.json")
+	data, err := os.ReadFile(anonymousPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,17 +230,30 @@ func TestCookiePersistenceIsPythonCompatible(t *testing.T) {
 	if len(records) != 1 || records[0]["name"] != "buvid3" || records[0]["path"] != "/" {
 		t.Fatalf("cookie JSON = %s", data)
 	}
-	if info, err := os.Stat(client.cookieFile); err != nil || info.Mode().Perm()&0o077 != 0 {
+	if info, err := os.Stat(anonymousPath); err != nil || info.Mode().Perm()&0o077 != 0 {
 		t.Fatalf("cookie permissions = %v, err = %v", info.Mode().Perm(), err)
 	}
 
-	reloaded, err := New(Config{Endpoints: endpoints(server.URL), CookieFile: client.cookieFile, AccountHTTP: server.Client(), SearchHTTP: server.Client()})
+	reloaded, err := New(Config{Endpoints: endpoints(server.URL), CookieFile: client.cookieFile, AnonymousCookieFile: anonymousPath, AccountHTTP: server.Client(), SearchHTTP: server.Client()})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if ok, err := reloaded.LoadCookies(); err != nil || !ok {
-		t.Fatalf("LoadCookies() = %v, %v", ok, err)
+	home, err := url.Parse(reloaded.endpoints.Home)
+	if err != nil {
+		t.Fatal(err)
 	}
+	if cookie, err := findCookie(reloaded.searchJar.Cookies(home), "buvid3"); err != nil || cookie.Value != "persisted" {
+		t.Fatalf("reloaded anonymous fingerprint = %v, %v", cookie, err)
+	}
+}
+
+func findCookie(cookies []*http.Cookie, name string) (*http.Cookie, error) {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return cookie, nil
+		}
+	}
+	return nil, http.ErrNoCookie
 }
 
 func TestLogoutClearsPersistedAndInMemoryCookies(t *testing.T) {
@@ -306,7 +364,7 @@ func TestWBIKeysAcceptAnonymousNavDataWithoutWeakeningAccountChecks(t *testing.T
 	defer server.Close()
 	client := testClient(t, server, Config{})
 
-	img, sub, err := client.wbiKeys(context.Background())
+	img, sub, err := client.wbiKeys(context.Background(), SearchIdentityAnonymous)
 	if err != nil || img != "7cd084941338484aae1ad9425b84077c" || sub != "4932caff0ff746eab6f01bf08b70ac45" {
 		t.Fatalf("wbiKeys = %q, %q, %v", img, sub, err)
 	}
@@ -353,7 +411,7 @@ func TestSearchReportsGaiaRiskControlVoucher(t *testing.T) {
 		case "/nav":
 			writeJSON(w, navFixture)
 		case "/search":
-			io.WriteString(w, `{"code":0,"message":"OK","data":{"v_voucher":"opaque-challenge"}}`)
+			io.WriteString(w, `{"code":0,"message":"OK","data":{"v_voucher":"opaque-challenge","result":[{"bvid":"BVpartial"}]}}`)
 		default:
 			http.NotFound(w, r)
 		}

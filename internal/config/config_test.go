@@ -175,6 +175,9 @@ func TestResolveExplicitPaths(t *testing.T) {
 	if paths.CookieFile != filepath.Join(root, "state", "cookies", "bilibili.json") {
 		t.Errorf("cookie path = %q", paths.CookieFile)
 	}
+	if paths.AnonymousCookieFile != filepath.Join(root, "state", "cookies", "bilibili-anonymous.json") {
+		t.Errorf("anonymous cookie path = %q", paths.AnonymousCookieFile)
+	}
 	if paths.MigrationMarker != filepath.Join(root, "state", migrationMarkerName) {
 		t.Errorf("marker path = %q", paths.MigrationMarker)
 	}

@@ -59,24 +59,35 @@ func signWBI(params url.Values, imgKey, subKey string, timestamp int64) url.Valu
 }
 
 func (c *Client) SignWBI(ctx context.Context, params url.Values) (url.Values, error) {
-	img, sub, err := c.wbiKeys(ctx)
+	return c.SignWBIWithIdentity(ctx, params, SearchIdentityAnonymous)
+}
+
+type wbiState struct {
+	img string
+	sub string
+	at  time.Time
+}
+
+func (c *Client) SignWBIWithIdentity(ctx context.Context, params url.Values, identity SearchIdentity) (url.Values, error) {
+	img, sub, err := c.wbiKeys(ctx, identity)
 	if err != nil {
 		return nil, err
 	}
 	return signWBI(params, img, sub, c.now().Unix()), nil
 }
 
-func (c *Client) wbiKeys(ctx context.Context) (string, string, error) {
+func (c *Client) wbiKeys(ctx context.Context, identity SearchIdentity) (string, string, error) {
 	c.wbiMu.Lock()
 	defer c.wbiMu.Unlock()
-	if c.wbiImgKey != "" && c.now().Sub(c.wbiAt) < 10*time.Minute {
-		return c.wbiImgKey, c.wbiSubKey, nil
+	state := c.wbi[identity]
+	if state.img != "" && c.now().Sub(state.at) < 10*time.Minute {
+		return state.img, state.sub, nil
 	}
 	var data navData
 	// Anonymous NAV responses use code -101 while still returning public WBI
 	// image keys in data. Only key retrieval accepts that code; Account keeps
 	// treating it as an authentication failure.
-	if err := c.getAllowCode(ctx, c.account, "wbi keys", c.endpoints.Nav, nil, &data, -101); err != nil {
+	if err := c.getAllowCode(ctx, c.searchClient(identity), "wbi keys", c.endpoints.Nav, nil, &data, -101); err != nil {
 		return "", "", err
 	}
 	img := strings.TrimSuffix(path.Base(data.WBIImg.ImgURL), path.Ext(data.WBIImg.ImgURL))
@@ -84,6 +95,6 @@ func (c *Client) wbiKeys(ctx context.Context) (string, string, error) {
 	if img == "" || sub == "" || img == "." || sub == "." {
 		return "", "", &APIError{Operation: "wbi keys", Message: "NAV response omitted WBI keys"}
 	}
-	c.wbiImgKey, c.wbiSubKey, c.wbiAt = img, sub, c.now()
+	c.wbi[identity] = wbiState{img: img, sub: sub, at: c.now()}
 	return img, sub, nil
 }

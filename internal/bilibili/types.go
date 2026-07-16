@@ -89,19 +89,21 @@ func (e Endpoints) withDefaults() Endpoints {
 }
 
 type Config struct {
-	Endpoints     Endpoints
-	CookieFile    string
-	CookieStore   CookieStore
-	AccountHTTP   *http.Client
-	SearchHTTP    *http.Client
-	Limiter       netx.Limiter
-	Timeout       time.Duration
-	MaxAttempts   int
-	CacheSize     int
-	Now           func() time.Time
-	Sleep         netx.Sleeper
-	UserAgent     string
-	WriteInterval time.Duration
+	Endpoints           Endpoints
+	CookieFile          string
+	AnonymousCookieFile string
+	CookieStore         CookieStore
+	AccountHTTP         *http.Client
+	SearchHTTP          *http.Client
+	Limiter             netx.Limiter
+	SearchLimiter       netx.Limiter
+	Timeout             time.Duration
+	MaxAttempts         int
+	CacheSize           int
+	Now                 func() time.Time
+	Sleep               netx.Sleeper
+	UserAgent           string
+	WriteInterval       time.Duration
 }
 
 // CookieStore allows the reusable engine to persist authentication without
@@ -153,11 +155,36 @@ type LoginOptions struct {
 }
 
 type SearchOptions struct {
-	Page       int
-	PageSize   int
-	SearchType string
-	Order      string
+	Page        int
+	PageSize    int
+	SearchType  string
+	Order       string
+	Identity    SearchIdentity
+	CachePolicy SearchCachePolicy
 }
+
+type SearchIdentity string
+
+const (
+	SearchIdentityAnonymous SearchIdentity = "anonymous"
+	SearchIdentitySession   SearchIdentity = "session"
+)
+
+type SearchCachePolicy string
+
+const (
+	SearchCacheDefault SearchCachePolicy = ""
+	SearchCacheBypass  SearchCachePolicy = "bypass"
+)
+
+type RiskControlReason string
+
+const (
+	RiskControlVoucher  RiskControlReason = "voucher"
+	RiskControlHTTP412  RiskControlReason = "http_412"
+	RiskControlCode412  RiskControlReason = "code_-412"
+	RiskControlCode1200 RiskControlReason = "code_-1200"
+)
 
 type CreateFavoriteRequest struct {
 	Title   string
@@ -207,6 +234,7 @@ type APIError struct {
 	Message     string
 	RequestID   string
 	RiskControl bool
+	RiskReason  RiskControlReason
 	Err         error
 }
 
@@ -241,7 +269,14 @@ func (e *APIError) Unwrap() error { return e.Err }
 // BatchFatal reports request-contract or risk-control failures that should stop
 // a multi-song search rather than repeating the same rejected request.
 func (e *APIError) BatchFatal() bool {
-	return e != nil && e.Operation == "search" && (e.RiskControl || e.StatusCode == http.StatusPreconditionFailed || e.Code == -412 || e.Code == -1200)
+	return e != nil && e.Operation == "search" && e.RiskReason != ""
+}
+
+func (e *APIError) RiskControlReason() string {
+	if e == nil {
+		return ""
+	}
+	return string(e.RiskReason)
 }
 
 func sleepContext(ctx context.Context, delay time.Duration) error {

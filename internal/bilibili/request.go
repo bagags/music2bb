@@ -78,6 +78,7 @@ func (c *Client) doAllowCode(client *netx.Client, operation string, req *http.Re
 				apiErr.Message = envelope.Message
 			}
 		}
+		classifyRiskControl(apiErr)
 		return apiErr
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
@@ -91,7 +92,9 @@ func (c *Client) doAllowCode(client *netx.Client, operation string, req *http.Re
 		return &APIError{Operation: operation, RequestID: requestID, Err: err}
 	}
 	if envelope.Code != 0 && envelope.Code != allowedCode {
-		return &APIError{Operation: operation, Code: envelope.Code, Message: envelope.Message, RequestID: requestID}
+		apiErr := &APIError{Operation: operation, Code: envelope.Code, Message: envelope.Message, RequestID: requestID}
+		classifyRiskControl(apiErr)
+		return apiErr
 	}
 	if out == nil || len(envelope.Data) == 0 || string(envelope.Data) == "null" {
 		return nil
@@ -102,6 +105,20 @@ func (c *Client) doAllowCode(client *netx.Client, operation string, req *http.Re
 		return &APIError{Operation: operation, RequestID: requestID, Err: err}
 	}
 	return nil
+}
+
+func classifyRiskControl(apiErr *APIError) {
+	if apiErr == nil {
+		return
+	}
+	switch {
+	case apiErr.Code == -412:
+		apiErr.RiskControl, apiErr.RiskReason = true, RiskControlCode412
+	case apiErr.Code == -1200:
+		apiErr.RiskControl, apiErr.RiskReason = true, RiskControlCode1200
+	case apiErr.StatusCode == http.StatusPreconditionFailed:
+		apiErr.RiskControl, apiErr.RiskReason = true, RiskControlHTTP412
+	}
 }
 
 func (c *Client) addHeaders(req *http.Request) {

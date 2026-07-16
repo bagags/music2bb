@@ -37,13 +37,14 @@ type Options struct {
 
 // Paths contains all state locations used by the Go implementation.
 type Paths struct {
-	Dir             string
-	CacheDir        string
-	CookieFile      string
-	BlockFile       string
-	QualityFile     string
-	UploaderFile    string
-	MigrationMarker string
+	Dir                 string
+	CacheDir            string
+	CookieFile          string
+	AnonymousCookieFile string
+	BlockFile           string
+	QualityFile         string
+	UploaderFile        string
+	MigrationMarker     string
 }
 
 // MigrationResult reports what happened during the one-time legacy import.
@@ -87,13 +88,14 @@ func Resolve(options Options) (Paths, error) {
 		return Paths{}, fmt.Errorf("resolve cache directory: %w", err)
 	}
 	return Paths{
-		Dir:             dir,
-		CacheDir:        cacheDir,
-		CookieFile:      filepath.Join(dir, "cookies", "bilibili.json"),
-		BlockFile:       filepath.Join(dir, "b.txt"),
-		QualityFile:     filepath.Join(dir, "w.txt"),
-		UploaderFile:    filepath.Join(dir, "w-up.txt"),
-		MigrationMarker: filepath.Join(dir, migrationMarkerName),
+		Dir:                 dir,
+		CacheDir:            cacheDir,
+		CookieFile:          filepath.Join(dir, "cookies", "bilibili.json"),
+		AnonymousCookieFile: filepath.Join(dir, "cookies", "bilibili-anonymous.json"),
+		BlockFile:           filepath.Join(dir, "b.txt"),
+		QualityFile:         filepath.Join(dir, "w.txt"),
+		UploaderFile:        filepath.Join(dir, "w-up.txt"),
+		MigrationMarker:     filepath.Join(dir, migrationMarkerName),
 	}, nil
 }
 
