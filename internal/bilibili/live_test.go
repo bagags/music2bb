@@ -59,7 +59,11 @@ func TestLiveAnonymousSearchExcludesAccountCookies(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	if _, err := client.Search(ctx, query, SearchOptions{Page: 1, PageSize: 5, SearchType: "video", Order: "totalrank", Identity: SearchIdentityAnonymous}); err != nil {
-		t.Fatal(err)
+		response := capture.response
+		if len(response) > 2048 {
+			response = response[:2048]
+		}
+		t.Fatalf("anonymous search: %v; request=%s cookies=%q response=%s", err, capture.requestURL, capture.cookies, response)
 	}
 	if len(capture.cookies) == 0 {
 		t.Fatal("anonymous canary captured no outgoing requests")
@@ -97,7 +101,8 @@ func TestLiveReadOnlyVideoDetail(t *testing.T) {
 	}
 }
 
-// This read-only canary catches Bilibili search endpoint and signing drift.
+// This read-only canary catches authenticated Bilibili WBI search and signing
+// drift.
 // Run it with:
 //
 //	MUSIC2BB_TEST_SEARCH_QUERY='贝多芬 第五交响曲' MUSIC2BB_TEST_COOKIE_FILE=/path/to/bilibili.json go test -tags=live ./internal/bilibili -run TestLiveReadOnlySearch
@@ -119,7 +124,7 @@ func TestLiveReadOnlySearch(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
-	videos, err := client.Search(ctx, query, SearchOptions{Page: 1, PageSize: 20, SearchType: "video", Order: "totalrank"})
+	videos, err := client.Search(ctx, query, SearchOptions{Page: 1, PageSize: 20, SearchType: "video", Order: "totalrank", Identity: SearchIdentitySession})
 	if err != nil {
 		t.Fatal(err)
 	}

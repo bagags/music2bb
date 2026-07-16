@@ -24,6 +24,7 @@ func (SearchCacheMissError) SearchCacheMiss() bool { return true }
 type Endpoints struct {
 	Home                 string
 	Nav                  string
+	AnonymousSearch      string
 	Search               string
 	VideoDetail          string
 	QRGenerate           string
@@ -40,6 +41,7 @@ func DefaultEndpoints() Endpoints {
 	return Endpoints{
 		Home:                 "https://www.bilibili.com/",
 		Nav:                  "https://api.bilibili.com/x/web-interface/nav",
+		AnonymousSearch:      "https://api.bilibili.com/x/web-interface/search/all/v2",
 		Search:               "https://api.bilibili.com/x/web-interface/wbi/search/type",
 		VideoDetail:          "https://api.bilibili.com/x/web-interface/view",
 		QRGenerate:           "https://passport.bilibili.com/x/passport-login/web/qrcode/generate",
@@ -60,6 +62,9 @@ func (e Endpoints) withDefaults() Endpoints {
 	}
 	if e.Nav == "" {
 		e.Nav = defaults.Nav
+	}
+	if e.AnonymousSearch == "" {
+		e.AnonymousSearch = defaults.AnonymousSearch
 	}
 	if e.Search == "" {
 		e.Search = defaults.Search

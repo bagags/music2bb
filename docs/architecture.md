@@ -59,13 +59,15 @@ consumers outside this module.
 | `internal/catalogue` | Embedded versioned classical-catalogue symbols, strict registry validation, and normalized reference parsing |
 | `internal/netx` | Shared HTTP retry, concurrency, and rate-limit behavior |
 
-Bilibili video search uses the typed WBI endpoint with Unicode-safe signing and
-two isolated identities. Anonymous search starts from its own persistent device
-jar and can accept first-party device cookies, but it never imports account
-cookies. Session search uses the authenticated jar and is partitioned by MID.
-Each identity has separate WBI and fingerprint state. HTTP/API rejection details
-remain typed errors, and a Gaia risk-control voucher is reported as a challenge
-rather than misrepresented as an empty search result.
+Bilibili video search uses the public H5 aggregate endpoint for isolated
+anonymous reads and the typed WBI endpoint with Unicode-safe signing for stored
+first-party sessions. Anonymous search starts from its own persistent device jar
+and can accept first-party device cookies, but it never imports account cookies.
+Session search uses the authenticated jar and is partitioned by MID. Each
+identity has separate fingerprint state, while WBI state is used only when the
+selected endpoint requires signing. HTTP/API rejection details remain typed
+errors, and a Gaia risk-control voucher is reported as a challenge rather than
+misrepresented as an empty search result.
 
 ## Public and internal data
 

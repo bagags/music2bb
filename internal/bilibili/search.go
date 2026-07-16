@@ -176,20 +176,34 @@ func (c *Client) searchUncached(ctx context.Context, query string, options Searc
 	if err := c.ensureFingerprint(ctx, options.Identity); err != nil {
 		return nil, err
 	}
-	params := url.Values{
-		"keyword":     {query},
-		"page":        {strconv.Itoa(options.Page)},
-		"page_size":   {strconv.Itoa(options.PageSize)},
-		"search_type": {options.SearchType},
-		"order":       {options.Order},
-	}
-	signed, err := c.SignWBIWithIdentity(ctx, params, options.Identity)
-	if err != nil {
-		return nil, err
-	}
 	var data searchData
-	if err := c.get(ctx, c.searchClient(options.Identity), "search", c.endpoints.Search, signed, &data); err != nil {
-		return nil, err
+	if options.Identity == SearchIdentityAnonymous && options.SearchType == "video" && options.Order == "totalrank" {
+		params := url.Values{
+			"keyword":      {query},
+			"page":         {strconv.Itoa(options.Page)},
+			"page_size":    {strconv.Itoa(options.PageSize)},
+			"platform":     {"h5"},
+			"web_location": {"1430654"},
+		}
+		if err := c.get(ctx, c.search, "search", c.endpoints.AnonymousSearch, params, &data); err != nil {
+			return nil, err
+		}
+	} else {
+		params := url.Values{
+			"keyword":      {query},
+			"page":         {strconv.Itoa(options.Page)},
+			"page_size":    {strconv.Itoa(options.PageSize)},
+			"search_type":  {options.SearchType},
+			"order":        {options.Order},
+			"web_location": {"1430654"},
+		}
+		signed, err := c.SignWBIWithIdentity(ctx, params, options.Identity)
+		if err != nil {
+			return nil, err
+		}
+		if err := c.get(ctx, c.searchClient(options.Identity), "search", c.endpoints.Search, signed, &data); err != nil {
+			return nil, err
+		}
 	}
 	if options.Identity == SearchIdentityAnonymous {
 		_ = c.SaveAnonymousCookies()

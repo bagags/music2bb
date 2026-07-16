@@ -31,7 +31,7 @@ func fixture(t *testing.T, name string) []byte {
 
 func endpoints(base string) Endpoints {
 	return Endpoints{
-		Home: base + "/home", Nav: base + "/nav", Search: base + "/search",
+		Home: base + "/home", Nav: base + "/nav", AnonymousSearch: base + "/search", Search: base + "/search",
 		VideoDetail: base + "/detail", QRGenerate: base + "/qr/generate", QRPoll: base + "/qr/poll",
 		FavoriteList: base + "/favorites", FavoriteCreate: base + "/favorites/create",
 		FavoriteDeal: base + "/favorites/deal", FavoriteResourceList: base + "/favorites/resources",
@@ -64,9 +64,12 @@ func writeJSON(w http.ResponseWriter, data []byte) {
 	w.Write(data)
 }
 
-func TestDefaultSearchEndpointUsesTypedWBIAPI(t *testing.T) {
+func TestDefaultSearchEndpointsSeparateAnonymousH5AndSessionWBI(t *testing.T) {
+	if got, want := DefaultEndpoints().AnonymousSearch, "https://api.bilibili.com/x/web-interface/search/all/v2"; got != want {
+		t.Fatalf("anonymous search endpoint = %q, want %q", got, want)
+	}
 	if got, want := DefaultEndpoints().Search, "https://api.bilibili.com/x/web-interface/wbi/search/type"; got != want {
-		t.Fatalf("search endpoint = %q, want %q", got, want)
+		t.Fatalf("session search endpoint = %q, want %q", got, want)
 	}
 }
 
@@ -101,11 +104,14 @@ func TestAnonymousSearchExcludesAccountCookiesAndDeduplicatesConcurrentRequests(
 			if got := r.URL.Query().Get("keyword"); got != "中文 fixture" {
 				t.Errorf("search keyword = %q", got)
 			}
-			if got := r.URL.Query().Get("search_type"); got != "video" {
-				t.Errorf("search type = %q", got)
+			if got := r.URL.Query().Get("platform"); got != "h5" {
+				t.Errorf("search platform = %q", got)
 			}
-			if r.URL.Query().Get("wts") == "" || r.URL.Query().Get("w_rid") == "" {
-				t.Errorf("search query is unsigned: %v", r.URL.Query())
+			if got := r.URL.Query().Get("web_location"); got != "1430654" {
+				t.Errorf("search web_location = %q", got)
+			}
+			if r.URL.Query().Get("wts") != "" || r.URL.Query().Get("w_rid") != "" {
+				t.Errorf("anonymous H5 search was unexpectedly signed: %v", r.URL.Query())
 			}
 			writeJSON(w, searchFixture)
 		default:
@@ -173,8 +179,16 @@ func TestSearchIdentityKeepsSessionAndAnonymousJarsIsolated(t *testing.T) {
 				if sessionErr != nil || csrfErr != nil {
 					t.Errorf("session identity cookies missing: SESSDATA=%v bili_jct=%v", sessionErr, csrfErr)
 				}
+				if r.URL.Query().Get("wts") == "" || r.URL.Query().Get("w_rid") == "" {
+					t.Errorf("session search query is unsigned: %v", r.URL.Query())
+				}
+				if got := r.URL.Query().Get("web_location"); got != "1430654" {
+					t.Errorf("session search web_location = %q", got)
+				}
 			} else if !errors.Is(sessionErr, http.ErrNoCookie) || !errors.Is(csrfErr, http.ErrNoCookie) {
 				t.Errorf("anonymous identity leaked account cookies: SESSDATA=%v bili_jct=%v", sessionErr, csrfErr)
+			} else if got := r.URL.Query().Get("platform"); got != "h5" {
+				t.Errorf("anonymous search platform = %q", got)
 			}
 			writeJSON(w, searchFixture)
 		default:
