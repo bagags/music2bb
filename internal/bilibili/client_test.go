@@ -375,6 +375,34 @@ func TestWBIKeysAcceptAnonymousNavDataWithoutWeakeningAccountChecks(t *testing.T
 	}
 }
 
+func TestAddToFavoriteUsesSessionWBIIdentity(t *testing.T) {
+	navFixture := fixture(t, "nav.json")
+	var navHadSession atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/nav":
+			if _, err := r.Cookie("SESSDATA"); err == nil {
+				navHadSession.Store(true)
+			}
+			writeJSON(w, navFixture)
+		case "/favorites/deal":
+			io.WriteString(w, `{"code":0,"data":{}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	client := testClient(t, server, Config{Now: func() time.Time { return time.Unix(1702204169, 0) }})
+	client.applyCookieString("bili_jct=csrf; SESSDATA=session")
+	result, err := client.AddToFavorite(context.Background(), 900, []model.Video{{BVID: "BV1fixture", AID: 101}})
+	if err != nil || !reflect.DeepEqual(result.Succeeded, []string{"BV1fixture"}) {
+		t.Fatalf("AddToFavorite = %#v, %v", result, err)
+	}
+	if !navHadSession.Load() {
+		t.Fatal("favorite WBI keys were fetched without the authenticated session")
+	}
+}
+
 func TestHTTPErrorPreservesBilibiliDetails(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/detail" {

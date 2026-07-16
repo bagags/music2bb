@@ -117,7 +117,7 @@ func (c *Client) AddToFavoriteWithReceipts(ctx context.Context, favoriteID int64
 			"rid": {strconv.FormatInt(aid, 10)}, "type": {"2"},
 			"add_media_ids": {strconv.FormatInt(favoriteID, 10)}, "del_media_ids": {""}, "csrf": {csrf},
 		}
-		if signed, err := c.SignWBI(ctx, form); err == nil {
+		if signed, err := c.SignWBIWithIdentity(ctx, form, SearchIdentitySession); err == nil {
 			form = signed
 		} else if ctx.Err() != nil {
 			for pending := index; pending < len(videos); pending++ {
