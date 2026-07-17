@@ -203,6 +203,24 @@ func TestConvertInterspersedOptions(t *testing.T) {
 	}
 }
 
+func TestURLShorthandStartsConversion(t *testing.T) {
+	const playlistURL = "https://test.ulr.com"
+	backend := &fakeBackend{}
+	backend.parse = func(_ context.Context, rawURL string, _ music2bb.ParseOptions, _ music2bb.Observer) ([]music2bb.Song, error) {
+		if rawURL != playlistURL {
+			t.Fatalf("playlist URL = %q, want %q", rawURL, playlistURL)
+		}
+		return []music2bb.Song{{Name: "song", Artist: "artist"}}, nil
+	}
+	app, _, errOut := testApp(backend)
+	if exit := app.Run(context.Background(), []string{playlistURL, "--favorite", "target", "--yes"}); exit != ExitSuccess {
+		t.Fatalf("exit = %d, stderr = %q", exit, errOut.String())
+	}
+	if backend.matchCalls != 1 {
+		t.Fatalf("match calls = %d, want 1", backend.matchCalls)
+	}
+}
+
 func TestFreshAndRefreshSearchHaveOrthogonalResumeSemantics(t *testing.T) {
 	root := t.TempDir()
 	base := &fakeBackend{}

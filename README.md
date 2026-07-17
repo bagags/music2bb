@@ -59,6 +59,12 @@ music2bb version
 music2bb license
 ```
 
+为兼容旧版 Python 命令，可以省略 `convert`，直接把 HTTP(S) 歌单链接作为第一个参数：
+
+```bash
+music2bb 'https://example.com/playlist'
+```
+
 首次登录：
 
 ```bash

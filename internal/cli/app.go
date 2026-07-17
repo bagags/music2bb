@@ -53,6 +53,9 @@ func (a *App) Run(ctx context.Context, args []string) int {
 		a.printHelp()
 		return ExitSuccess
 	}
+	if isHTTPURL(args[0]) {
+		return a.runConvert(ctx, args)
+	}
 	command := args[0]
 	commandArgs := args[1:]
 	switch command {

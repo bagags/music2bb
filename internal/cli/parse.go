@@ -1,6 +1,17 @@
 package cli
 
-import "strings"
+import (
+	"net/url"
+	"strings"
+)
+
+func isHTTPURL(value string) bool {
+	parsed, err := url.ParseRequestURI(value)
+	if err != nil || parsed.Host == "" {
+		return false
+	}
+	return parsed.Scheme == "http" || parsed.Scheme == "https"
+}
 
 // interspersed moves known flags before positionals so the standard flag
 // package accepts the documented "command <value> [options]" form.
