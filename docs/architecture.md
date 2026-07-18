@@ -10,6 +10,7 @@ reused by another Go frontend.
 cmd/music2bb
 ├── internal/cli
 │   └── music2bb (module root)
+├── internal/selfupdate
 └── music2bb (module root)
     ├── internal/service
     ├── internal/wiring
@@ -45,6 +46,7 @@ consumers outside this module.
 | `music2bb` | Stable public engine, caller-owned result types, typed errors, observers, and dependency-injection options |
 | `cmd/music2bb` | Process startup, signal handling, terminal detection, and build-version reporting |
 | `internal/cli` | Shared conversion session, Bubble Tea workspace, plain prompts, review flows, rendering, and exit-code mapping |
+| `internal/selfupdate` | GitHub Releases lookup, platform asset selection, SHA-256 verification, archive extraction, and safe executable replacement |
 | `internal/service` | Use-case orchestration through small client and matcher interfaces |
 | `internal/wiring` | Production construction and adapters between service interfaces and concrete clients |
 | `internal/playlist` | Provider identification, typed optimizations, candidate decoding, merging, and browser-fallback coordination |

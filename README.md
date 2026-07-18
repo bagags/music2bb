@@ -28,7 +28,21 @@
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/bagags/music2bb-go/releases) 下载与平台对应的压缩包，并使用随附的 `.sha256` 文件校验。压缩包包含不内置浏览器的单文件程序、GPLv3 许可证、非官方与无隶属关系声明、第三方软件声明、完整 Chromium credits、精确来源记录和对应源码信息。也可以直接安装当前源码：
+macOS 或 Linux 使用一行命令安装：
+
+```bash
+curl -fsSL https://github.com/bagags/music2bb-go/releases/latest/download/install.sh | sh
+```
+
+Windows PowerShell 使用：
+
+```powershell
+irm https://github.com/bagags/music2bb-go/releases/latest/download/install.ps1 | iex
+```
+
+安装器自动识别 amd64/arm64，下载对应的 GitHub Release，校验随附的 SHA-256 后再安装。macOS/Linux 默认安装到 `~/.local/bin`，并在需要时把该目录加入当前 shell 的启动配置；Windows 默认安装到 `%LOCALAPPDATA%\Programs\music2bb` 并更新用户级 `PATH`。两者均不需要管理员权限。shell 安装后若提示 PATH 已更新，请重新打开终端，之后可在任何目录直接运行 `music2bb`。
+
+也可以从 [GitHub Releases](https://github.com/bagags/music2bb-go/releases) 手动下载与平台对应的压缩包，并使用随附的 `.sha256` 或 `checksums.txt` 校验。压缩包包含不内置浏览器的单文件程序、GPLv3 许可证、非官方与无隶属关系声明、第三方软件声明、完整 Chromium credits、精确来源记录和对应源码信息。直接安装当前源码则使用：
 
 ```bash
 go install github.com/bagags/music2bb-go/cmd/music2bb@latest
@@ -55,9 +69,20 @@ music2bb favorites create <name> [--intro TEXT] [--public]
 music2bb browser install|status|clear
 music2bb cache status
 music2bb cache clear --search|--checkpoints|--decisions|--anonymous-identity|--all
+music2bb update check
+music2bb update
 music2bb version
 music2bb license
 ```
+
+检查和安装最新稳定版：
+
+```bash
+music2bb update check
+music2bb update
+```
+
+自更新会重新读取 GitHub Releases、选择当前平台归档并验证 SHA-256。macOS/Linux 以同目录临时文件原子替换当前程序；Windows 下载完成后由临时 PowerShell 进程在当前 `music2bb` 进程退出后完成替换。用户级默认安装可直接自更新；如果手动把程序放进只读或管理员目录，需要先移到用户可写目录。
 
 为兼容旧版 Python 命令，可以省略 `convert`，直接把 HTTP(S) 歌单链接作为第一个参数：
 
@@ -266,7 +291,7 @@ go test -count=1 -tags=authenticated ./internal/bilibili \
   -run TestAuthenticatedFavoriteLifecycleCanary -v
 ```
 
-CI 运行单元、fixture、race、vet、标签编译、六个平台的无浏览器交叉构建，以及六个原生 runner 上的托管浏览器安装、启动和受控提取。Linux ARM64 的独立手动工作流固定源码、`depot_tools`、GN 参数和归档配方，在 `ubuntu-24.04-arm` 冒烟测试后发布独立浏览器 release、校验和、构建元数据和 artifact attestation。`v*` 标签只发布 music2bb 可执行文件、许可证、第三方软件声明、完整 Chromium credits、来源记录和 SHA-256；发布包不含 Chromium 二进制或归档。
+CI 运行单元、fixture、race、vet、标签编译、安装脚本语法检查、六个平台的无浏览器交叉构建，以及六个原生 runner 上的托管浏览器安装、启动和受控提取。Linux ARM64 的独立手动工作流固定源码、`depot_tools`、GN 参数和归档配方，在 `ubuntu-24.04-arm` 冒烟测试后发布独立浏览器 release、校验和、构建元数据和 artifact attestation。稳定版 `vMAJOR.MINOR.PATCH` 标签会自动发布 macOS、Windows、Linux 的 amd64/arm64 六个归档、各自 SHA-256、合并校验表和两个安装入口；发布包不含 Chromium 二进制或归档。
 
 ## 许可证
 
