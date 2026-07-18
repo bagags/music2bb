@@ -9,6 +9,7 @@ versions are those in `go.mod`; update this file when dependencies change.
 - `charm.land/bubbles/v2` — Copyright (c) 2020-2026 Charmbracelet, Inc.
 - `charm.land/bubbletea/v2` — Copyright (c) 2020-2026 Charmbracelet, Inc.
 - `charm.land/lipgloss/v2` — Copyright (c) 2021-2026 Charmbracelet, Inc.
+- `github.com/bagags/classical-catalogue-id-parser` — Copyright (c) 2026 Yi Yang
 - `github.com/go-rod/rod` — Copyright 2019 Yad Smood
 - `github.com/skip2/go-qrcode` — Copyright (c) 2014 Tom Harwood
 - `github.com/charmbracelet/colorprofile` — Copyright (c) 2020-2024 Charmbracelet, Inc.

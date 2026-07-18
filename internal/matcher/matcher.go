@@ -11,7 +11,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/bagags/music2bb-go/internal/catalogue"
+	catalogue "github.com/bagags/classical-catalogue-id-parser"
 	"github.com/bagags/music2bb-go/internal/model"
 	"github.com/bagags/music2bb-go/internal/service"
 )

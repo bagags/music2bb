@@ -6,6 +6,7 @@ require (
 	charm.land/bubbles/v2 v2.1.1
 	charm.land/bubbletea/v2 v2.0.8
 	charm.land/lipgloss/v2 v2.0.5
+	github.com/bagags/classical-catalogue-id-parser v0.0.0-20260718064007-147d098e8127
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/go-rod/rod v0.116.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e

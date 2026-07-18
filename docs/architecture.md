@@ -15,7 +15,6 @@ cmd/music2bb
     ├── internal/wiring
     ├── internal/model
     ├── internal/config
-    ├── internal/catalogue
     ├── internal/playlist
     ├── internal/applemusic
     ├── internal/bilibili
@@ -56,7 +55,6 @@ consumers outside this module.
 | `internal/bilibili` | Authentication, search, WBI signing, cookies, and favorite operations |
 | `internal/browser` | Bundled/downloaded Chromium verification, lazy installation, and provider-neutral dynamic-page candidate extraction |
 | `internal/config` | State paths, embedded matcher defaults, and one-time legacy-state migration |
-| `internal/catalogue` | Embedded versioned classical-catalogue symbols, strict registry validation, and normalized reference parsing |
 | `internal/netx` | Shared HTTP retry, concurrency, and rate-limit behavior |
 
 Bilibili video search uses the public H5 aggregate endpoint for isolated
@@ -86,8 +84,9 @@ mode always aggregates the title-only fallback. Both apply profile-specific
 title, total-score, and runner-up thresholds, and every unresolved outcome
 carries a public review reason.
 
-The classical scorer also consults the dependency-free `internal/catalogue`
-parser. When the source song name and candidate title contain the same complete
+The classical scorer also consults the dependency-free external
+[`classical-catalogue-id-parser`](https://github.com/bagags/classical-catalogue-id-parser)
+module. When the source song name and candidate title contain the same complete
 catalogue reference, the title component becomes 100 before the configured six
 weights are applied. Standard scoring never invokes this boost, and a catalogue
 mismatch leaves the existing similarity score unchanged. Registry provenance,
