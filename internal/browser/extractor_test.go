@@ -25,7 +25,6 @@ func TestProcessLauncherSandboxPolicy(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			process := newProcessLauncher(context.Background(), "/test/chromium", test.noSandbox)
-			defer process.Cleanup()
 			if got := process.Has(flags.NoSandbox); got != test.wantFlag {
 				t.Fatalf("no-sandbox flag present = %v, want %v", got, test.wantFlag)
 			}
