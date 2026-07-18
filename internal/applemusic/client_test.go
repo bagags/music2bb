@@ -40,6 +40,48 @@ func TestExtractPlaylistFromSerializedServerData(t *testing.T) {
 	}
 }
 
+func TestExtractAlbumCombinesTrackSectionsAndUsesHeaderTitle(t *testing.T) {
+	pageHTML := readFixture(t, "testdata/album.html")
+	result, err := extractSerializedPlaylist(pageHTML, mustURL(t, "https://music.apple.com/cn/album/mozart-symphonies-nos-35-41/968876434"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExpectedTotal != 3 {
+		t.Fatalf("ExpectedTotal = %d, want 3", result.ExpectedTotal)
+	}
+	songs := playlist.DecodeTracks(result.Tracks, nil)
+	if len(songs) != 3 {
+		t.Fatalf("songs = %#v, want 3 album tracks", songs)
+	}
+	if songs[0].Name != `Symphony No. 35 in D Major, K. 385 "Haffner": I. Allegro con spirito` ||
+		songs[2].Name != `Symphony No. 36 in C Major, K. 425 "Linz": I. Adagio - Allegro spiritoso` {
+		t.Fatalf("songs are not in section order: %#v", songs)
+	}
+	for _, song := range songs {
+		if song.Album != "Mozart: Symphonies Nos. 35-41" {
+			t.Fatalf("song album = %q, want header title", song.Album)
+		}
+		if !strings.HasPrefix(song.SourceID, "applemusic:") {
+			t.Fatalf("song SourceID = %q", song.SourceID)
+		}
+	}
+}
+
+func TestExtractCollectionRejectsUnsupportedAppleMusicURLs(t *testing.T) {
+	tests := []string{
+		"https://music.apple.com/cn/artist/wolfgang-amadeus-mozart/164663",
+		"https://music.apple.com/cn/album/missing-id/not-a-number",
+		"https://music.apple.com/us/playlist/missing-id/not-a-playlist-id",
+	}
+	for _, rawURL := range tests {
+		t.Run(rawURL, func(t *testing.T) {
+			if _, err := extractSerializedPlaylist(readFixture(t, "testdata/album.html"), mustURL(t, rawURL)); err == nil {
+				t.Fatal("expected unsupported collection URL error")
+			}
+		})
+	}
+}
+
 func TestExtractPlaylistReturnsDeclaredPartialResult(t *testing.T) {
 	result, err := extractSerializedPlaylist(readFixture(t, "testdata/partial.html"), mustURL(t, "https://music.apple.com/us/playlist/partial/pl.partial"))
 	if err != nil {

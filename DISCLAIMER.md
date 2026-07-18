@@ -64,7 +64,7 @@ transcoding, relaying, distribution, hosting, or digital-rights-management
 (DRM) circumvention functionality.
 
 The program processes only data required for playlist conversion: publicly
-shared playlist pages provided by the user and track metadata such as names,
+shared playlist and album pages provided by the user and track metadata such as names,
 artists, albums, and durations; Bilibili search-result metadata and identifiers
 such as titles, uploader names, and BVIDs; and authenticated operations
 explicitly initiated and authorized by the user. “Conversion” means matching

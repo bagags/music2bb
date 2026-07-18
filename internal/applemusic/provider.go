@@ -1,4 +1,4 @@
-// Package applemusic implements Apple Music playlist extraction optimizations.
+// Package applemusic implements Apple Music playlist and album extraction optimizations.
 package applemusic
 
 import (
@@ -9,7 +9,7 @@ import (
 )
 
 // ProviderID joins Apple Music URL identification to its independently
-// registered playlist extraction optimization.
+// registered collection extraction optimization.
 const ProviderID playlist.ProviderID = "apple-music"
 
 // URLIdentifier matches only music.apple.com and its hostname boundary.

@@ -52,7 +52,7 @@ consumers outside this module.
 | `internal/model` | I/O-free domain records and song/search normalization |
 | `internal/matcher` | Balanced query phases, candidate filtering, scoring, ranking, review reasons, and selection thresholds |
 | `internal/kugou` | Browser-free Kugou protocol optimization, response parsing, and song cleanup |
-| `internal/applemusic` | Browser-free Apple Music share-page identification and `serialized-server-data` playlist extraction |
+| `internal/applemusic` | Browser-free Apple Music share-page identification and `serialized-server-data` playlist/album extraction |
 | `internal/bilibili` | Authentication, search, WBI signing, cookies, and favorite operations |
 | `internal/browser` | Bundled/downloaded Chromium verification, lazy installation, and provider-neutral dynamic-page candidate extraction |
 | `internal/config` | State paths, embedded matcher defaults, and one-time legacy-state migration |
@@ -185,8 +185,9 @@ error for internal diagnostics; they do not create a new public error category.
 
 Kugou and Apple Music are currently optimized sources. The Apple Music
 extractor fetches the unauthenticated public share page through the shared
-rate-limited HTTP stack, selects the `trackLockup` section matching the URL's
-playlist ID, and reads its declared `trackCount`. A short server-rendered result
+rate-limited HTTP stack, selects and combines the `trackLockup` sections matching
+the URL's playlist or album ID, combines structured `workName` and movement titles,
+and reads its declared `trackCount`. A short server-rendered result
 therefore remains useful partial data while still triggering the common
 Chromium fallback. Apple-specific page structure stays in `internal/applemusic`;
 the shared browser extractor contains only provider-neutral candidate rules.

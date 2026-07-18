@@ -151,7 +151,7 @@ music2bb cache clear --all
 
 ## 歌单解析与 Chromium 回退
 
-程序根据原始 HTTP(S) URL 自动识别歌单来源，不需要也不提供 `--provider`。已识别来源会先运行已注册的优化；酷狗优化保留直连 API、页面数据和既有解析顺序，Apple Music 优化读取用户提供的公开分享歌单页面中的公开元数据，按页面顺序解析曲名、艺人、专辑、时长和声明总数，无需 Apple 账号登录。未知来源或没有歌单提取优化的来源，在策略允许时直接使用通用 Chromium 提取。只有来源优化失败、结果为空或少于页面声明总数时才触发浏览器回退；合并时来源优化结果优先，并保留可用的部分歌单。
+程序根据原始 HTTP(S) URL 自动识别歌单来源，不需要也不提供 `--provider`。已识别来源会先运行已注册的优化；酷狗优化保留直连 API、页面数据和既有解析顺序，Apple Music 优化读取用户提供的公开分享歌单或专辑页面中的公开元数据，按页面顺序解析曲名、艺人、专辑、时长和声明总数，无需 Apple 账号登录。对于包含多个分组的 Apple Music 专辑，所有属于该专辑的曲目分区会按页面顺序合并；古典曲目还会把结构化作品名与乐章名组合，保留供 `classical` 匹配使用的目录编号。未知来源或没有歌单提取优化的来源，在策略允许时直接使用通用 Chromium 提取。只有来源优化失败、结果为空或少于页面声明总数时才触发浏览器回退；合并时来源优化结果优先，并保留可用的部分歌单。
 
 | `--browser` | 处理方式 |
 |---|---|
@@ -228,7 +228,7 @@ go vet ./...
 
 ```bash
 MUSIC2BB_TEST_KUGOU_URL='<playlist-url>' \
-MUSIC2BB_TEST_APPLE_MUSIC_URL='<apple-music-playlist-url>' \
+MUSIC2BB_TEST_APPLE_MUSIC_URL='<apple-music-playlist-or-album-url>' \
 MUSIC2BB_TEST_BVID='BV1xx411c7mD' \
 MUSIC2BB_TEST_SEARCH_QUERY='贝多芬 第五交响曲' \
 MUSIC2BB_TEST_COOKIE_FILE='/path/to/bilibili.json' \

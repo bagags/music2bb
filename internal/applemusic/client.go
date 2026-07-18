@@ -28,7 +28,7 @@ type HTTPDoer interface {
 	Do(*http.Request) (*http.Response, error)
 }
 
-// Client fetches Apple Music's unauthenticated server-rendered playlist page.
+// Client fetches Apple Music's unauthenticated server-rendered collection page.
 type Client struct {
 	http HTTPDoer
 }
@@ -41,10 +41,11 @@ func New(httpClient *netx.Client) *Client {
 }
 
 // Name identifies this optimization in internal diagnostics.
-func (c *Client) Name() string { return "apple-music-playlist" }
+func (c *Client) Name() string { return "apple-music-collection" }
 
 // ExtractPlaylist decodes the exact serialized server state embedded in an
-// Apple Music share page. Chromium fallback remains coordinator-owned.
+// Apple Music playlist or album share page. Chromium fallback remains
+// coordinator-owned.
 func (c *Client) ExtractPlaylist(ctx context.Context, source playlist.Source) (playlist.RawResult, error) {
 	if err := ctx.Err(); err != nil {
 		return playlist.RawResult{}, err
@@ -107,6 +108,7 @@ type serializedSection struct {
 
 type serializedItem struct {
 	Title             string            `json:"title"`
+	WorkName          string            `json:"workName"`
 	ArtistName        string            `json:"artistName"`
 	SubtitleLinks     []titleLink       `json:"subtitleLinks"`
 	TertiaryLinks     []titleLink       `json:"tertiaryLinks"`
@@ -137,32 +139,33 @@ func extractSerializedPlaylist(pageHTML []byte, sourceURL *url.URL) (playlist.Ra
 	if err := decoder.Decode(&root); err != nil {
 		return playlist.RawResult{}, fmt.Errorf("decode JSON: %w", err)
 	}
-	playlistID := playlistIdentifier(sourceURL)
-	if playlistID == "" {
-		return playlist.RawResult{}, errors.New("playlist URL does not contain an Apple Music playlist ID")
+	collection, ok := collectionFromURL(sourceURL)
+	if !ok {
+		return playlist.RawResult{}, errors.New("URL does not contain an Apple Music playlist or album ID")
 	}
 
 	sections := make([]serializedSection, 0)
 	for _, envelope := range root.Data {
 		sections = append(sections, envelope.Data.Sections...)
 	}
-	var trackSection *serializedSection
+	trackSections := make([]serializedSection, 0)
 	for index := range sections {
 		section := &sections[index]
-		if section.ItemKind == "trackLockup" && descriptorMatches(section.ContainerContentDescriptor, playlistID) {
-			trackSection = section
-			break
+		if section.ItemKind == "trackLockup" && descriptorMatches(section.ContainerContentDescriptor, collection) {
+			trackSections = append(trackSections, *section)
 		}
 	}
-	if trackSection == nil {
-		return playlist.RawResult{}, fmt.Errorf("matching trackLockup section %q was not found", playlistID)
+	if len(trackSections) == 0 {
+		return playlist.RawResult{}, fmt.Errorf("matching trackLockup section for %s %q was not found", collection.Kind, collection.ID)
 	}
 
 	expectedTotal := -1
+	collectionTitle := ""
 	for _, section := range sections {
 		for _, item := range section.Items {
-			if item.TrackCount != nil && descriptorMatches(item.ContentDescriptor, playlistID) {
+			if item.TrackCount != nil && descriptorMatches(item.ContentDescriptor, collection) {
 				expectedTotal = *item.TrackCount
+				collectionTitle = strings.TrimSpace(item.Title)
 				break
 			}
 		}
@@ -171,28 +174,41 @@ func extractSerializedPlaylist(pageHTML []byte, sourceURL *url.URL) (playlist.Ra
 		}
 	}
 	if expectedTotal < 0 {
-		expectedTotal = len(trackSection.Items)
+		expectedTotal = 0
+		for _, section := range trackSections {
+			expectedTotal += len(section.Items)
+		}
 	}
 
-	tracks := make([]playlist.TrackCandidate, 0, len(trackSection.Items))
-	for _, item := range trackSection.Items {
-		artist := strings.TrimSpace(item.ArtistName)
-		if artist == "" {
-			artist = joinedLinkTitles(item.SubtitleLinks)
+	tracks := make([]playlist.TrackCandidate, 0, expectedTotal)
+	for _, section := range trackSections {
+		for _, item := range section.Items {
+			title := strings.TrimSpace(item.Title)
+			workName := strings.TrimSpace(item.WorkName)
+			if workName != "" && workName != title {
+				title = workName + ": " + title
+			}
+			artist := strings.TrimSpace(item.ArtistName)
+			if artist == "" {
+				artist = joinedLinkTitles(item.SubtitleLinks)
+			}
+			album := ""
+			if len(item.TertiaryLinks) > 0 {
+				album = strings.TrimSpace(item.TertiaryLinks[0].Title)
+			}
+			if album == "" && collection.Kind == "album" {
+				album = collectionTitle
+			}
+			tracks = append(tracks, playlist.TrackCandidate{
+				Fields: map[string]string{
+					"title":  title,
+					"artist": artist,
+				},
+				Album:    album,
+				Duration: formatDurationMillis(item.Duration),
+				SourceID: appleMusicSourceID(item.ContentDescriptor.Identifiers.StoreAdamID),
+			})
 		}
-		album := ""
-		if len(item.TertiaryLinks) > 0 {
-			album = strings.TrimSpace(item.TertiaryLinks[0].Title)
-		}
-		tracks = append(tracks, playlist.TrackCandidate{
-			Fields: map[string]string{
-				"title":  strings.TrimSpace(item.Title),
-				"artist": artist,
-			},
-			Album:    album,
-			Duration: formatDurationMillis(item.Duration),
-			SourceID: appleMusicSourceID(item.ContentDescriptor.Identifiers.StoreAdamID),
-		})
 	}
 	return playlist.RawResult{Tracks: tracks, ExpectedTotal: expectedTotal}, nil
 }
@@ -239,21 +255,39 @@ func hasSerializedServerDataID(header []byte) bool {
 	return serializedScriptIDPattern.Match(header)
 }
 
-func playlistIdentifier(value *url.URL) string {
-	if value == nil {
-		return ""
-	}
-	segments := strings.Split(strings.Trim(value.Path, "/"), "/")
-	for index := len(segments) - 1; index >= 0; index-- {
-		if strings.HasPrefix(segments[index], "pl.") {
-			return segments[index]
-		}
-	}
-	return ""
+type collectionReference struct {
+	Kind string
+	ID   string
 }
 
-func descriptorMatches(descriptor contentDescriptor, playlistID string) bool {
-	return descriptor.Kind == "playlist" && descriptor.Identifiers.StoreAdamID == playlistID
+func collectionFromURL(value *url.URL) (collectionReference, bool) {
+	if value == nil {
+		return collectionReference{}, false
+	}
+	segments := strings.Split(strings.Trim(value.Path, "/"), "/")
+	for index, segment := range segments {
+		if segment != "playlist" && segment != "album" {
+			continue
+		}
+		if index+2 >= len(segments) {
+			return collectionReference{}, false
+		}
+		id := strings.TrimSpace(segments[len(segments)-1])
+		if segment == "playlist" && !strings.HasPrefix(id, "pl.") {
+			return collectionReference{}, false
+		}
+		if segment == "album" {
+			if _, err := strconv.ParseUint(id, 10, 64); err != nil {
+				return collectionReference{}, false
+			}
+		}
+		return collectionReference{Kind: segment, ID: id}, true
+	}
+	return collectionReference{}, false
+}
+
+func descriptorMatches(descriptor contentDescriptor, collection collectionReference) bool {
+	return descriptor.Kind == collection.Kind && descriptor.Identifiers.StoreAdamID == collection.ID
 }
 
 func joinedLinkTitles(links []titleLink) string {
