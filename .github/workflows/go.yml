@@ -23,6 +23,22 @@ jobs:
       - run: go test -race ./...
       - run: go vet ./...
       - run: go test -run '^$' -tags='live authenticated browser_install' ./...
+      - name: Validate POSIX installer syntax
+        run: sh -n install.sh
+      - name: Validate PowerShell installer syntax
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path ./install.ps1),
+            [ref]$tokens,
+            [ref]$parseErrors
+          ) | Out-Null
+          if ($parseErrors.Count -ne 0) {
+            $parseErrors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
 
   build:
     runs-on: ubuntu-24.04
@@ -79,10 +95,10 @@ jobs:
         run: |
           if [[ "${ARCHIVE_KIND}" == "zip" ]]; then
             (cd dist && zip -qr "${PACKAGE}.zip" "${PACKAGE}")
-            sha256sum "dist/${PACKAGE}.zip" > "dist/${PACKAGE}.zip.sha256"
+            (cd dist && sha256sum "${PACKAGE}.zip" > "${PACKAGE}.zip.sha256")
           else
             tar -C dist -czf "dist/${PACKAGE}.tar.gz" "${PACKAGE}"
-            sha256sum "dist/${PACKAGE}.tar.gz" > "dist/${PACKAGE}.tar.gz.sha256"
+            (cd dist && sha256sum "${PACKAGE}.tar.gz" > "${PACKAGE}.tar.gz.sha256")
           fi
           rm -rf "dist/${PACKAGE}"
       - uses: actions/upload-artifact@v4
@@ -183,10 +199,34 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "release tag must use stable semantic form vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             echo "release $GITHUB_REF_NAME already exists" >&2
             exit 1
           fi
+      - name: Verify the six-platform release set
+        run: |
+          for target in \
+            darwin-amd64 darwin-arm64 \
+            linux-amd64 linux-arm64 \
+            windows-amd64 windows-arm64
+          do
+            extension="tar.gz"
+            if [[ "${target}" == windows-* ]]; then
+              extension="zip"
+            fi
+            archive="dist/music2bb-${target}.${extension}"
+            test -f "${archive}"
+            test -f "${archive}.sha256"
+          done
+          test "$(find dist -maxdepth 1 -type f | wc -l)" -eq 12
+      - name: Add installer entrypoints and combined checksums
+        run: |
+          (cd dist && sha256sum music2bb-*.tar.gz music2bb-*.zip > checksums.txt)
+          cp install.sh install.ps1 dist/
       - name: Create release and upload immutable assets
         env:
           GH_TOKEN: ${{ github.token }}
