@@ -197,7 +197,7 @@ func TestCoordinatorPartialFallsBackMergesAndNormalizes(t *testing.T) {
 	}
 }
 
-func TestCoordinatorProvisionsBundledBrowserAndNotifiesBeforeFallback(t *testing.T) {
+func TestCoordinatorEnsuresBrowserAndNotifiesBeforeFallback(t *testing.T) {
 	extractor := &fakePlaylistExtractor{name: "direct", err: errors.New("HTTP failed")}
 	baseBrowser := &fakeBrowserExtractor{result: RawResult{Tracks: []TrackCandidate{candidate("Browser", "Artist", "")}}}
 	browser := &provisioningBrowserExtractor{fakeBrowserExtractor: baseBrowser, ensureAvailable: true}

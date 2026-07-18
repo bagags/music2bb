@@ -32,10 +32,9 @@ func TestPinnedArchiveInstallLaunchAndExtraction(t *testing.T) {
 		t.Skipf("no pinned artifact for %s", currentPlatform())
 	}
 	manager, err := NewManagerWithOptions(ManagerOptions{
-		CacheDir:   t.TempDir(),
-		Platform:   currentPlatform(),
-		Manifest:   manifest,
-		HTTPClient: &http.Client{Transport: archiveTransport{path: archivePath, size: info.Size()}},
+		CacheDir: t.TempDir(), Platform: currentPlatform(), Manifest: manifest,
+		HTTPClient:             &http.Client{Transport: archiveTransport{path: archivePath, size: info.Size()}},
+		DisableSystemDiscovery: true,
 	})
 	if err != nil {
 		t.Fatal(err)

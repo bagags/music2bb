@@ -14,6 +14,8 @@ import (
 // Artifact describes one exact Chromium archive, its upstream source, and its
 // executable inside the extracted archive.
 type Artifact struct {
+	Origin            string `json:"origin"`
+	Availability      string `json:"availability,omitempty"`
 	Version           string `json:"chromium_version"`
 	Revision          int    `json:"revision"`
 	Commit            string `json:"chromium_commit"`
@@ -26,6 +28,9 @@ type Artifact struct {
 	SHA256            string `json:"sha256"`
 	Executable        string `json:"executable"`
 	ArchiveBytes      int64  `json:"archive_bytes"`
+	BuildRecipeURL    string `json:"build_recipe_url,omitempty"`
+	BuilderRunURL     string `json:"builder_run_url,omitempty"`
+	AttestationURL    string `json:"attestation_url,omitempty"`
 }
 
 // CreditsProvenance records how the distributable third-party notices were
@@ -78,7 +83,7 @@ func loadEmbeddedManifest() (Manifest, error) {
 	if err := json.Unmarshal(embeddedManifest, &manifest); err != nil {
 		return Manifest{}, fmt.Errorf("decode embedded manifest: %w", err)
 	}
-	if manifest.Schema != 2 {
+	if manifest.Schema != 3 {
 		return Manifest{}, fmt.Errorf("unsupported manifest schema %d", manifest.Schema)
 	}
 	if manifest.Project != "Chromium" {
@@ -121,7 +126,7 @@ func validHex(value string, length int) bool {
 }
 
 func validateArtifactProvenance(artifact Artifact) error {
-	if artifact.Revision <= 0 || artifact.ArchiveBytes <= 0 || artifact.Executable == "" {
+	if artifact.Revision <= 0 || artifact.Executable == "" {
 		return fmt.Errorf("incomplete archive metadata")
 	}
 	versionParts := strings.Split(artifact.Version, ".")
@@ -139,8 +144,22 @@ func validateArtifactProvenance(artifact Artifact) error {
 	if !validCommit(artifact.Commit) {
 		return fmt.Errorf("invalid Chromium commit %q", artifact.Commit)
 	}
-	if !validChecksum(artifact.SHA256) {
-		return fmt.Errorf("invalid archive checksum %q", artifact.SHA256)
+	if artifact.SourceURL != "https://chromium.googlesource.com/chromium/src/+/"+artifact.Commit || artifact.LicenseURL != artifact.SourceURL+"/LICENSE" {
+		return fmt.Errorf("provenance URLs do not match revision and commit")
+	}
+	switch artifact.Origin {
+	case "chromium-snapshot":
+		return validateSnapshotArtifact(artifact)
+	case "music2bb-build":
+		return validateProjectArtifact(artifact)
+	default:
+		return fmt.Errorf("unsupported artifact origin %q", artifact.Origin)
+	}
+}
+
+func validateSnapshotArtifact(artifact Artifact) error {
+	if artifact.Availability != "" || artifact.ArchiveBytes <= 0 || !validChecksum(artifact.SHA256) {
+		return fmt.Errorf("incomplete snapshot archive metadata")
 	}
 	if _, err := strconv.ParseUint(artifact.ArchiveGeneration, 10, 64); err != nil {
 		return fmt.Errorf("invalid archive generation %q", artifact.ArchiveGeneration)
@@ -153,12 +172,31 @@ func validateArtifactProvenance(artifact Artifact) error {
 	if err != nil || archiveURL.Query().Get("generation") != artifact.ArchiveGeneration {
 		return fmt.Errorf("archive URL does not pin object generation")
 	}
-	if artifact.SourceURL != "https://chromium.googlesource.com/chromium/src/+/"+artifact.Commit ||
-		artifact.LicenseURL != artifact.SourceURL+"/LICENSE" ||
-		!strings.HasPrefix(artifact.RevisionURL, "https://storage.googleapis.com/chromium-browser-snapshots/") ||
+	if !strings.HasPrefix(artifact.RevisionURL, "https://storage.googleapis.com/chromium-browser-snapshots/") ||
 		!strings.HasSuffix(artifact.RevisionURL, "/"+revision+"/REVISIONS") ||
 		!strings.HasPrefix(artifact.URL, strings.TrimSuffix(artifact.RevisionURL, "REVISIONS")) {
-		return fmt.Errorf("provenance URLs do not match revision and commit")
+		return fmt.Errorf("snapshot URLs do not match revision")
+	}
+	return nil
+}
+
+func validateProjectArtifact(artifact Artifact) error {
+	tag := fmt.Sprintf("chromium-%s-r%d", artifact.Version, artifact.Revision)
+	wantPrefix := "https://github.com/bagags/music2bb-go/releases/download/" + tag + "/"
+	if artifact.ArchiveGeneration != tag || !strings.HasPrefix(artifact.URL, wantPrefix) || artifact.BuildRecipeURL == "" {
+		return fmt.Errorf("project build URLs do not match immutable browser release %s", tag)
+	}
+	if artifact.Availability == "pending-build" {
+		if artifact.SHA256 != "" || artifact.ArchiveBytes != 0 || artifact.PublishedAt != "" || artifact.BuilderRunURL != "" || artifact.AttestationURL != "" {
+			return fmt.Errorf("pending project build contains publication metadata")
+		}
+		return nil
+	}
+	if artifact.Availability != "" || !validChecksum(artifact.SHA256) || artifact.ArchiveBytes <= 0 || artifact.BuilderRunURL == "" || artifact.AttestationURL == "" {
+		return fmt.Errorf("incomplete project build publication metadata")
+	}
+	if _, err := time.Parse(time.RFC3339, artifact.PublishedAt); err != nil {
+		return fmt.Errorf("invalid archive publication time: %w", err)
 	}
 	return nil
 }

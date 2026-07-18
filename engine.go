@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/bagags/music2bb-go/internal/bilibili"
+	"github.com/bagags/music2bb-go/internal/browser"
 	"github.com/bagags/music2bb-go/internal/config"
 	"github.com/bagags/music2bb-go/internal/playlist"
 	"github.com/bagags/music2bb-go/internal/service"
@@ -42,6 +43,7 @@ func New(cfg Config, options ...Option) (*Engine, error) {
 		AppleMusicHTTP:      resolved.http.AppleMusic,
 		AccountHTTP:         resolved.http.BilibiliAccount,
 		SearchHTTP:          resolved.http.BilibiliSearch,
+		BrowserExecutable:   cfg.Browser.ExecutablePath,
 	}
 	if resolved.clock != nil {
 		wiringOptions.Now = resolved.clock.Now
@@ -70,6 +72,9 @@ func New(cfg Config, options ...Option) (*Engine, error) {
 	}
 	components, err := wiring.New(wiringOptions)
 	if err != nil {
+		if browser.IsKind(err, browser.ErrorInvalidExecutable) {
+			return nil, &Error{Category: ErrorInvalidInput, Operation: "new", Err: err}
+		}
 		return nil, &Error{Category: ErrorInternal, Operation: "new", Err: err}
 	}
 	login := cfg.Login

@@ -50,3 +50,17 @@ func ExtractConfigDir(args []string) string {
 	}
 	return ""
 }
+
+// ExtractBrowserExecutable finds the browser override before the backend is
+// constructed. The option remains in args for command-specific parsing.
+func ExtractBrowserExecutable(args []string) string {
+	for index, arg := range args {
+		if strings.HasPrefix(arg, "--browser-executable=") {
+			return strings.TrimPrefix(arg, "--browser-executable=")
+		}
+		if arg == "--browser-executable" && index+1 < len(args) {
+			return args[index+1]
+		}
+	}
+	return ""
+}

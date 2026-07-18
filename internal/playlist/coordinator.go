@@ -72,7 +72,7 @@ func (c *Coordinator) ParsePlaylistWithOptions(ctx context.Context, rawURL strin
 					return contextError(ctx, availabilityErr)
 				}
 				if availabilityErr != nil {
-					return &Error{Kind: ErrorBrowser, Op: "prepare bundled browser", Err: availabilityErr}
+					return &Error{Kind: ErrorBrowser, Op: "prepare browser", Err: availabilityErr}
 				}
 			}
 		}

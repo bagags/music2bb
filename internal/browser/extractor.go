@@ -28,8 +28,8 @@ func NewExtractor(manager *Manager) *Extractor {
 	return &Extractor{Manager: manager, LoadTimeout: 90 * time.Second}
 }
 
-// Available reports whether the manager has a checksum-verified browser. It
-// only inspects the managed cache and never installs or launches Chromium.
+// Available reports whether a selected system browser or checksum-verified
+// managed browser is ready. It never installs or launches Chromium.
 func (e *Extractor) Available(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -44,9 +44,8 @@ func (e *Extractor) Available(ctx context.Context) (bool, error) {
 	return status.Installed, nil
 }
 
-// EnsureAvailable installs a compiled-in Chromium archive when one is
-// available. It never downloads, so default source builds and tests remain
-// offline until a caller explicitly requests installation.
+// EnsureAvailable performs the same read-only availability check. Downloading
+// remains an explicit manager or CLI operation.
 func (e *Extractor) EnsureAvailable(ctx context.Context) (bool, error) {
 	if err := ctx.Err(); err != nil {
 		return false, err
@@ -54,11 +53,7 @@ func (e *Extractor) EnsureAvailable(ctx context.Context) (bool, error) {
 	if e == nil || e.Manager == nil {
 		return false, nil
 	}
-	status, provisioned, err := e.Manager.ensureBundledInstalled(ctx)
-	if err != nil {
-		return false, err
-	}
-	return provisioned && status.Installed, nil
+	return e.Available(ctx)
 }
 
 // ExtractPlaylist extracts ordered provider-neutral track candidates using

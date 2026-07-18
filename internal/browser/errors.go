@@ -10,6 +10,7 @@ type ErrorKind string
 
 const (
 	ErrorUnsupportedPlatform ErrorKind = "unsupported_platform"
+	ErrorInvalidExecutable   ErrorKind = "invalid_executable"
 	ErrorNotInstalled        ErrorKind = "not_installed"
 	ErrorApprovalRequired    ErrorKind = "approval_required"
 	ErrorNonInteractive      ErrorKind = "non_interactive_install_denied"

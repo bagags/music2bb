@@ -85,9 +85,6 @@ func (s *conversionSession) parse(ctx context.Context, observer music2bb.Observe
 		return songs, err
 	}
 	message := fmt.Sprintf("Chromium 尚未就绪，正在自动下载并安装校验版（%s）后重试。", browserDownloadSize(status))
-	if status.Bundled {
-		message = "Chromium 尚未就绪，正在自动安装程序内置版本后重试。"
-	}
 	emitSessionWarning(observer, "parse_playlist", message)
 	if _, installErr := s.browser.Install(ctx, true); installErr != nil {
 		emitSessionWarning(observer, "parse_playlist", fmt.Sprintf("浏览器安装失败: %v", installErr))

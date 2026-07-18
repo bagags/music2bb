@@ -25,9 +25,15 @@ func run(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	engine, err := music2bb.New(music2bb.Config{ConfigDir: cli.ExtractConfigDir(args)})
+	engine, err := music2bb.New(music2bb.Config{
+		ConfigDir: cli.ExtractConfigDir(args),
+		Browser:   music2bb.BrowserOptions{ExecutablePath: cli.ExtractBrowserExecutable(args)},
+	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "初始化失败: %v\n", err)
+		if music2bb.CategoryOf(err) == music2bb.ErrorInvalidInput {
+			return cli.ExitInvalidInput
+		}
 		return cli.ExitInternal
 	}
 	defer engine.Close()

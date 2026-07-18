@@ -26,8 +26,18 @@ type BrowserStatus struct {
 	Present           bool
 	Installed         bool
 	Verified          bool
-	Bundled           bool
+	// Deprecated: Chromium is never embedded in music2bb binaries.
+	Bundled bool
+	Source  BrowserSource
 }
+
+// BrowserSource identifies how the selected browser is provisioned.
+type BrowserSource string
+
+const (
+	BrowserSourceSystem  BrowserSource = "system"
+	BrowserSourceManaged BrowserSource = "managed"
+)
 
 type BrowserInstallOptions struct {
 	Approved       bool
@@ -63,7 +73,8 @@ func browserStatusFromInternal(status browser.Status) BrowserStatus {
 		ApproxBytes:    status.ApproxBytes,
 		ExecutablePath: status.ExecutablePath, ExpectedSHA256: status.ExpectedSHA256,
 		ArchiveSHA256: status.ArchiveSHA256, ExecutableSHA256: status.ExecutableSHA256,
-		Present: status.Present, Installed: status.Installed, Verified: status.Verified, Bundled: status.Bundled,
+		Present: status.Present, Installed: status.Installed, Verified: status.Verified, Bundled: false,
+		Source: BrowserSource(status.Source),
 	}
 }
 

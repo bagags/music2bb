@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"net/url"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -102,6 +103,40 @@ func TestLogoutClearsStoredCookiesAndPreservesConfiguration(t *testing.T) {
 		!reflect.DeepEqual(state.QualityKeywords, []string{"official"}) ||
 		!reflect.DeepEqual(state.WeightedUploaders, []string{"trusted"}) {
 		t.Fatalf("configuration changed during logout: %#v", state)
+	}
+}
+
+func TestBrowserExecutablePathSelectsSystemBrowser(t *testing.T) {
+	root := t.TempDir()
+	executable := root + "/chromium"
+	if err := os.WriteFile(executable, []byte("browser"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	engine, err := New(Config{
+		ConfigDir: root + "/config", CacheDir: root + "/cache",
+		Browser: BrowserOptions{ExecutablePath: executable},
+	}, WithStorage(testStorage()))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = engine.Close() })
+	status, err := engine.Browser().Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Source != BrowserSourceSystem || !status.Installed || status.Verified || status.ExecutablePath != executable || status.Bundled {
+		t.Fatalf("status = %+v", status)
+	}
+}
+
+func TestInvalidBrowserExecutableIsInvalidInput(t *testing.T) {
+	root := t.TempDir()
+	_, err := New(Config{
+		ConfigDir: root + "/config", CacheDir: root + "/cache",
+		Browser: BrowserOptions{ExecutablePath: root + "/missing"},
+	}, WithStorage(testStorage()))
+	if CategoryOf(err) != ErrorInvalidInput {
+		t.Fatalf("category = %q, err = %v", CategoryOf(err), err)
 	}
 }
 
@@ -252,6 +287,7 @@ func TestUnknownProviderUsesInjectedBrowser(t *testing.T) {
 
 func TestUnknownProviderAutoWithoutBrowserReturnsBrowserError(t *testing.T) {
 	engine := newTestEngine(t, nil)
+	skipIfSystemBrowser(t, engine)
 	_, err := engine.ParsePlaylistWithOptions(
 		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAuto}, nil,
 	)
@@ -262,11 +298,20 @@ func TestUnknownProviderAutoWithoutBrowserReturnsBrowserError(t *testing.T) {
 
 func TestUnknownProviderAlwaysWithoutBrowserReturnsBrowserError(t *testing.T) {
 	engine := newTestEngine(t, nil)
+	skipIfSystemBrowser(t, engine)
 	_, err := engine.ParsePlaylistWithOptions(
 		context.Background(), "https://example.test/playlist", ParseOptions{BrowserPolicy: BrowserAlways}, nil,
 	)
 	if CategoryOf(err) != ErrorBrowser {
 		t.Fatalf("category = %q, want %q (err=%v)", CategoryOf(err), ErrorBrowser, err)
+	}
+}
+
+func skipIfSystemBrowser(t *testing.T, engine *Engine) {
+	t.Helper()
+	status, err := engine.Browser().Status(context.Background())
+	if err == nil && status.Source == BrowserSourceSystem {
+		t.Skipf("system browser discovered at %s", status.ExecutablePath)
 	}
 }
 

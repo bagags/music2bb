@@ -39,6 +39,7 @@ type Options struct {
 	SearchCache         bilibili.SearchCache
 	BrowserManager      *browser.Manager
 	BrowserExtractor    playlist.BrowserExtractor
+	BrowserExecutable   string
 }
 
 type Components struct {
@@ -68,7 +69,9 @@ func New(options Options) (*Components, error) {
 	manager := options.BrowserManager
 	if manager == nil {
 		var err error
-		manager, err = browser.NewManager(filepath.Join(state.CacheDir, "browser"))
+		manager, err = browser.NewManagerWithOptions(browser.ManagerOptions{
+			CacheDir: filepath.Join(state.CacheDir, "browser"), ExecutablePath: options.BrowserExecutable,
+		})
 		if err != nil {
 			return nil, err
 		}

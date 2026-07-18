@@ -13,23 +13,24 @@ import (
 )
 
 type convertOptions struct {
-	searchPages    int
-	topK           int
-	workers        int
-	matchProfile   string
-	searchIdentity string
-	searchBudget   int
-	favorite       string
-	yes            bool
-	browser        string
-	configDir      string
-	verbose        bool
-	manual         bool
-	manualReview   bool
-	qrLogin        bool
-	noTUI          bool
-	fresh          bool
-	refreshSearch  bool
+	searchPages       int
+	topK              int
+	workers           int
+	matchProfile      string
+	searchIdentity    string
+	searchBudget      int
+	favorite          string
+	yes               bool
+	browser           string
+	browserExecutable string
+	configDir         string
+	verbose           bool
+	manual            bool
+	manualReview      bool
+	qrLogin           bool
+	noTUI             bool
+	fresh             bool
+	refreshSearch     bool
 }
 
 func (a *App) runConvert(ctx context.Context, args []string) int {
@@ -52,6 +53,7 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	set.StringVar(&options.favorite, "favorite", "", "收藏夹 ID 或完整名称")
 	set.BoolVar(&options.yes, "yes", false, "无需确认")
 	set.StringVar(&options.browser, "browser", options.browser, "auto|never|always")
+	set.StringVar(&options.browserExecutable, "browser-executable", "", "Chromium 或 Google Chrome 可执行文件路径")
 	set.StringVar(&options.configDir, "config-dir", "", "配置目录")
 	set.BoolVar(&options.verbose, "verbose", false, "输出缓存、身份、预算和停止原因")
 	set.BoolVar(&options.verbose, "v", false, "输出缓存、身份、预算和停止原因")
@@ -65,7 +67,8 @@ func (a *App) runConvert(ctx context.Context, args []string) int {
 	set.BoolVar(&noQR, "no-qr-login", false, "禁止扫码登录")
 	valueFlags := map[string]bool{
 		"--search-pages": true, "--top-k": true, "--workers": true, "--match-profile": true,
-		"--search-identity": true, "--search-budget": true, "--favorite": true, "--browser": true, "--config-dir": true,
+		"--search-identity": true, "--search-budget": true, "--favorite": true, "--browser": true,
+		"--browser-executable": true, "--config-dir": true,
 	}
 	if err := set.Parse(interspersed(args, valueFlags)); err != nil {
 		if err == flag.ErrHelp {

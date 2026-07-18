@@ -176,7 +176,7 @@ func testApp(backend Backend) (*App, *bytes.Buffer, *bytes.Buffer) {
 	errOut := &bytes.Buffer{}
 	return &App{
 		Backend: backend,
-		Browser: fakeBrowser{status: music2bb.BrowserStatus{Installed: true, Revision: 1, ApproxBytes: 267_483_258, Verified: true, ExecutablePath: "/tmp/chrome"}},
+		Browser: fakeBrowser{status: music2bb.BrowserStatus{Installed: true, Revision: 1, ApproxBytes: 267_483_258, Verified: true, ExecutablePath: "/tmp/chrome", Source: music2bb.BrowserSourceManaged}},
 		IO:      IO{In: strings.NewReader(""), Out: out, Err: errOut},
 		Version: "v1.2.3",
 	}, out, errOut
@@ -854,15 +854,30 @@ func TestLicenseIncludesRequiredNotices(t *testing.T) {
 	}
 }
 
-func TestBrowserStatusReportsBundledBeforeFirstExtraction(t *testing.T) {
+func TestBrowserStatusReportsSystemBrowserWithoutProjectVerification(t *testing.T) {
 	app, out, _ := testApp(&fakeBackend{})
 	app.Browser = fakeBrowser{status: music2bb.BrowserStatus{
-		Bundled: true, Version: "152.0.7951.0", Revision: 1661829,
-		ChromiumCommit: "544d3cf2b1f8195b3133e90511d95e8c0325569b",
+		Source: music2bb.BrowserSourceSystem, Installed: true, Present: true,
+		ExecutablePath: "/Applications/Chromium.app/Contents/MacOS/Chromium",
 	}}
-	want := "bundled\tversion=152.0.7951.0\trevision=1661829\tcommit=544d3cf2b1f8195b3133e90511d95e8c0325569b\tinstalled=false\n"
+	want := "installed\tsource=system\tversion=unknown\trevision=0\tcommit=unknown\tverified=false\tpath=/Applications/Chromium.app/Contents/MacOS/Chromium\n"
 	if exit := app.Run(context.Background(), []string{"browser", "status"}); exit != ExitSuccess || out.String() != want {
 		t.Fatalf("exit = %d, output = %q", exit, out.String())
+	}
+}
+
+func TestBrowserInstallIsNoOpForSystemBrowser(t *testing.T) {
+	app, out, errOut := testApp(&fakeBackend{})
+	app.IO.Interactive = true
+	app.IO.In = strings.NewReader("n\n")
+	app.Browser = fakeBrowser{status: music2bb.BrowserStatus{
+		Source: music2bb.BrowserSourceSystem, Installed: true, Present: true, ExecutablePath: "/usr/bin/chromium",
+	}}
+	if exit := app.Run(context.Background(), []string{"browser", "install"}); exit != ExitSuccess {
+		t.Fatalf("exit = %d, stderr = %q", exit, errOut.String())
+	}
+	if strings.Contains(out.String(), "[y/N]") || !strings.Contains(out.String(), "source=system") {
+		t.Fatalf("output = %q", out.String())
 	}
 }
 

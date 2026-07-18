@@ -72,9 +72,12 @@ type LoginOptions struct {
 	Timeout          time.Duration
 }
 
-// BrowserOptions controls the default playlist browser-fallback policy.
+// BrowserOptions controls browser fallback and system-browser selection.
 type BrowserOptions struct {
 	Policy BrowserPolicy
+	// ExecutablePath selects a system Chromium or Google Chrome executable.
+	// It takes precedence over MUSIC2BB_BROWSER_EXECUTABLE and discovery.
+	ExecutablePath string
 }
 
 // ParseOptions controls one playlist parse operation.

@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "project": "Chromium",
   "resolved_at": "2026-07-14T15:02:53Z",
   "credits": {
@@ -45,6 +45,7 @@
   },
   "artifacts": {
     "darwin/arm64": {
+      "origin": "chromium-snapshot",
       "chromium_version": "152.0.7951.0",
       "revision": 1661829,
       "chromium_commit": "544d3cf2b1f8195b3133e90511d95e8c0325569b",
@@ -59,6 +60,7 @@
       "archive_bytes": 168652681
     },
     "darwin/amd64": {
+      "origin": "chromium-snapshot",
       "chromium_version": "152.0.7951.0",
       "revision": 1661832,
       "chromium_commit": "45ff7c7b210b9e49d12881193cbb2fbd6b78457e",
@@ -73,6 +75,7 @@
       "archive_bytes": 187141912
     },
     "windows/amd64": {
+      "origin": "chromium-snapshot",
       "chromium_version": "152.0.7950.0",
       "revision": 1661781,
       "chromium_commit": "45ce9117c5429ebf83502ff993056fc6e0d8575a",
@@ -87,6 +90,7 @@
       "archive_bytes": 344108432
     },
     "windows/arm64": {
+      "origin": "chromium-snapshot",
       "chromium_version": "152.0.7950.0",
       "revision": 1661807,
       "chromium_commit": "7e338d1ba16c391b2630f8431efabec5f469d7ec",
@@ -101,6 +105,7 @@
       "archive_bytes": 323001077
     },
     "linux/amd64": {
+      "origin": "chromium-snapshot",
       "chromium_version": "152.0.7951.0",
       "revision": 1661846,
       "chromium_commit": "24394684caab9de1b7f4a3a2f83636e3d1449b56",
@@ -113,6 +118,21 @@
       "sha256": "ba645202abec2a4b26b64442b64fd1c4b1833ad51cf8aaa6b67202a50dd06042",
       "executable": "chrome-linux/chrome",
       "archive_bytes": 240249260
+    },
+    "linux/arm64": {
+      "origin": "music2bb-build",
+      "availability": "pending-build",
+      "chromium_version": "152.0.7951.0",
+      "revision": 1661846,
+      "chromium_commit": "24394684caab9de1b7f4a3a2f83636e3d1449b56",
+      "source_url": "https://chromium.googlesource.com/chromium/src/+/24394684caab9de1b7f4a3a2f83636e3d1449b56",
+      "license_url": "https://chromium.googlesource.com/chromium/src/+/24394684caab9de1b7f4a3a2f83636e3d1449b56/LICENSE",
+      "archive_url": "https://github.com/bagags/music2bb-go/releases/download/chromium-152.0.7951.0-r1661846/chromium-linux-arm64.zip",
+      "archive_generation": "chromium-152.0.7951.0-r1661846",
+      "sha256": "",
+      "executable": "chrome-linux/chrome",
+      "archive_bytes": 0,
+      "build_recipe_url": "https://github.com/bagags/music2bb-go/blob/main/.github/workflows/chromium-linux-arm64.yml"
     }
   }
 }

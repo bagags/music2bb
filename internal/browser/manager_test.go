@@ -11,9 +11,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) { return f(request) }
 
 func TestInstallRequiresExplicitApproval(t *testing.T) {
 	var calls atomic.Int32
@@ -84,14 +89,17 @@ func TestEmbeddedManifestPinsVerifiedArtifacts(t *testing.T) {
 		t.Fatal(err)
 	}
 	expected := map[string]struct {
-		version  string
-		revision int
+		version      string
+		revision     int
+		origin       string
+		availability string
 	}{
-		"darwin/amd64":  {version: "152.0.7951.0", revision: 1661832},
-		"darwin/arm64":  {version: "152.0.7951.0", revision: 1661829},
-		"linux/amd64":   {version: "152.0.7951.0", revision: 1661846},
-		"windows/amd64": {version: "152.0.7950.0", revision: 1661781},
-		"windows/arm64": {version: "152.0.7950.0", revision: 1661807},
+		"darwin/amd64":  {version: "152.0.7951.0", revision: 1661832, origin: "chromium-snapshot"},
+		"darwin/arm64":  {version: "152.0.7951.0", revision: 1661829, origin: "chromium-snapshot"},
+		"linux/amd64":   {version: "152.0.7951.0", revision: 1661846, origin: "chromium-snapshot"},
+		"linux/arm64":   {version: "152.0.7951.0", revision: 1661846, origin: "music2bb-build", availability: "pending-build"},
+		"windows/amd64": {version: "152.0.7950.0", revision: 1661781, origin: "chromium-snapshot"},
+		"windows/arm64": {version: "152.0.7950.0", revision: 1661807, origin: "chromium-snapshot"},
 	}
 	if len(manifest.Artifacts) != len(expected) {
 		t.Errorf("manifest artifact count = %d, want %d", len(manifest.Artifacts), len(expected))
@@ -108,10 +116,13 @@ func TestEmbeddedManifestPinsVerifiedArtifacts(t *testing.T) {
 		if artifact.Revision != want.revision {
 			t.Errorf("%s revision = %d, want %d", platform, artifact.Revision, want.revision)
 		}
+		if artifact.Origin != want.origin || artifact.Availability != want.availability {
+			t.Errorf("%s origin/availability = %q/%q, want %q/%q", platform, artifact.Origin, artifact.Availability, want.origin, want.availability)
+		}
 		if err := validateArtifactProvenance(artifact); err != nil {
 			t.Errorf("%s has invalid provenance: %v", platform, err)
 		}
-		if artifact.URL == "" || artifact.Executable == "" || artifact.ArchiveBytes <= 0 {
+		if artifact.URL == "" || artifact.Executable == "" || (artifact.Availability == "" && artifact.ArchiveBytes <= 0) {
 			t.Errorf("%s has incomplete artifact metadata: %#v", platform, artifact)
 		}
 	}
@@ -160,7 +171,7 @@ func TestInstallVerifiesArchiveAndExecutable(t *testing.T) {
 	}
 }
 
-func TestEnsureBundledInstalledNeedsNoApprovalOrNetwork(t *testing.T) {
+func TestSystemBrowserPreventsDownloadAndNeedsNoApproval(t *testing.T) {
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -168,29 +179,179 @@ func TestEnsureBundledInstalledNeedsNoApprovalOrNetwork(t *testing.T) {
 	}))
 	defer server.Close()
 
-	archive := testArchive(t, "test/chrome", "bundled browser")
-	sum := sha256.Sum256(archive)
+	executable := filepath.Join(t.TempDir(), "chromium")
+	if err := os.WriteFile(executable, []byte("system browser"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	manager, err := NewManagerWithOptions(ManagerOptions{
-		CacheDir: t.TempDir(), Platform: "test/amd64",
+		CacheDir: t.TempDir(), Platform: "linux/amd64", ExecutablePath: executable,
 		Manifest: Manifest{Schema: 1, Artifacts: map[string]Artifact{
-			"test/amd64": {
-				Revision: 7, URL: server.URL, SHA256: hex.EncodeToString(sum[:]), Executable: "test/chrome",
+			"linux/amd64": {
+				Revision: 7, URL: server.URL, SHA256: testHash("archive"), Executable: "test/chrome",
 			},
 		}},
-		HTTPClient: server.Client(), BundledArchive: archive,
+		HTTPClient: server.Client(),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	status, provisioned, err := manager.ensureBundledInstalled(context.Background())
+	status, err := manager.Install(context.Background(), InstallOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !provisioned || !status.Bundled || !status.Installed || !status.Verified {
-		t.Fatalf("status = %+v, provisioned = %v", status, provisioned)
+	if status.Source != SourceSystem || status.Bundled || !status.Installed || status.Verified || status.ExecutablePath != executable {
+		t.Fatalf("status = %+v", status)
 	}
 	if calls.Load() != 0 {
 		t.Fatalf("download calls = %d, want 0", calls.Load())
+	}
+}
+
+func TestBrowserExecutablePrecedence(t *testing.T) {
+	explicit := testExecutable(t, "explicit")
+	environment := testExecutable(t, "environment")
+	discovered := testExecutable(t, "discovered")
+	manager, err := NewManagerWithOptions(ManagerOptions{
+		CacheDir: t.TempDir(), Platform: "linux/amd64", ExecutablePath: explicit,
+		Manifest: Manifest{Schema: 1, Artifacts: map[string]Artifact{"linux/amd64": {Revision: 1, Executable: "chrome"}}},
+		Getenv: func(name string) string {
+			if name == browserExecutableEnvironment {
+				return environment
+			}
+			return ""
+		},
+		LookPath: func(string) (string, error) { return discovered, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := manager.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ExecutablePath != explicit {
+		t.Fatalf("selected executable = %q, want explicit %q", status.ExecutablePath, explicit)
+	}
+}
+
+func TestBrowserExecutableEnvironmentPrecedesDiscovery(t *testing.T) {
+	environment := testExecutable(t, "environment")
+	discovered := testExecutable(t, "discovered")
+	manager, err := NewManagerWithOptions(ManagerOptions{
+		CacheDir: t.TempDir(), Platform: "linux/amd64",
+		Manifest: Manifest{Schema: 1, Artifacts: map[string]Artifact{"linux/amd64": {Revision: 1, Executable: "chrome"}}},
+		Getenv: func(name string) string {
+			if name == browserExecutableEnvironment {
+				return environment
+			}
+			return ""
+		},
+		LookPath: func(string) (string, error) { return discovered, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := manager.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ExecutablePath != environment {
+		t.Fatalf("selected executable = %q, want environment %q", status.ExecutablePath, environment)
+	}
+}
+
+func TestAutomaticDiscoveryUsesChromiumOrGoogleChromeOnly(t *testing.T) {
+	discovered := testExecutable(t, "google-chrome")
+	var names []string
+	manager, err := NewManagerWithOptions(ManagerOptions{
+		CacheDir: t.TempDir(), Platform: "linux/amd64",
+		Manifest: Manifest{Schema: 1, Artifacts: map[string]Artifact{"linux/amd64": {Revision: 1, Executable: "chrome"}}},
+		Getenv:   func(string) string { return "" },
+		LookPath: func(name string) (string, error) {
+			names = append(names, name)
+			if name == "google-chrome" {
+				return discovered, nil
+			}
+			return "", os.ErrNotExist
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := manager.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.ExecutablePath != discovered || status.Source != SourceSystem {
+		t.Fatalf("status = %+v", status)
+	}
+	for _, name := range names {
+		if strings.Contains(strings.ToLower(name), "edge") {
+			t.Fatalf("discovery queried Edge candidate %q", name)
+		}
+	}
+}
+
+func TestInvalidExplicitBrowserFailsImmediately(t *testing.T) {
+	_, err := NewManagerWithOptions(ManagerOptions{
+		CacheDir: t.TempDir(), Platform: "linux/amd64", ExecutablePath: filepath.Join(t.TempDir(), "missing"),
+		Manifest: Manifest{Schema: 1, Artifacts: map[string]Artifact{"linux/amd64": {Revision: 1, Executable: "chrome"}}},
+	})
+	if !IsKind(err, ErrorInvalidExecutable) {
+		t.Fatalf("NewManagerWithOptions error = %v, want %s", err, ErrorInvalidExecutable)
+	}
+}
+
+func TestManagedInstallReusesVerifiedCache(t *testing.T) {
+	archive := testArchive(t, "test/chrome", "cached browser")
+	var calls atomic.Int32
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return &http.Response{
+			StatusCode: http.StatusOK, Status: "200 OK", Header: make(http.Header),
+			Body: io.NopCloser(bytes.NewReader(archive)), ContentLength: int64(len(archive)), Request: request,
+		}, nil
+	})}
+	manager := testManager(t, client, "https://example.test/chromium.zip", archive)
+	for range 2 {
+		status, err := manager.Install(context.Background(), InstallOptions{Approved: true})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if status.Source != SourceManaged || !status.Verified {
+			t.Fatalf("status = %+v", status)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("download calls = %d, want 1", calls.Load())
+	}
+}
+
+func TestClearWithSystemBrowserLeavesExecutable(t *testing.T) {
+	root := t.TempDir()
+	executable := testExecutable(t, "chromium")
+	cacheDir := filepath.Join(root, "managed")
+	manager, err := NewManagerWithOptions(ManagerOptions{
+		CacheDir: cacheDir, Platform: "linux/amd64", ExecutablePath: executable,
+		Manifest: Manifest{Schema: 1, Artifacts: map[string]Artifact{"linux/amd64": {Revision: 1, Executable: "chrome"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(cacheDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cacheDir, "managed"), []byte("cache"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Clear(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(executable); err != nil {
+		t.Fatalf("system executable removed: %v", err)
+	}
+	if _, err := os.Stat(cacheDir); !os.IsNotExist(err) {
+		t.Fatalf("cache stat error = %v, want not exist", err)
 	}
 }
 
@@ -361,4 +522,13 @@ func testArchive(t *testing.T, name, contents string) []byte {
 func testHash(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func testExecutable(t *testing.T, name string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, []byte(name), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }

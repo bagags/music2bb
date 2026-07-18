@@ -124,11 +124,11 @@ func (a *App) runFavorites(ctx context.Context, args []string) int {
 func (a *App) runBrowser(ctx context.Context, args []string) int {
 	filtered := make([]string, 0, len(args))
 	for index := 0; index < len(args); index++ {
-		if args[index] == "--config-dir" && index+1 < len(args) {
+		if (args[index] == "--config-dir" || args[index] == "--browser-executable") && index+1 < len(args) {
 			index++
 			continue
 		}
-		if strings.HasPrefix(args[index], "--config-dir=") {
+		if strings.HasPrefix(args[index], "--config-dir=") || strings.HasPrefix(args[index], "--browser-executable=") {
 			continue
 		}
 		filtered = append(filtered, args[index])
@@ -145,29 +145,27 @@ func (a *App) runBrowser(ctx context.Context, args []string) int {
 			return ExitInternal
 		}
 		if !status.Installed {
-			if status.Bundled {
-				fmt.Fprintf(a.IO.Out, "bundled\t%s\tinstalled=false\n", browserProvenance(status))
-				return ExitSuccess
-			}
 			fmt.Fprintf(a.IO.Out, "not installed\t%s\n", browserProvenance(status))
 			return ExitSuccess
 		}
-		fmt.Fprintf(a.IO.Out, "installed\t%s\tverified=%t\tpath=%s\n", browserProvenance(status), status.Verified, status.ExecutablePath)
+		fmt.Fprintf(a.IO.Out, "installed\tsource=%s\t%s\tverified=%t\tpath=%s\n", status.Source, browserProvenance(status), status.Verified, status.ExecutablePath)
 		return ExitSuccess
 	case "install":
 		allow := true // The explicit install command is non-interactive approval.
 		status, _ := a.Browser.Status(ctx)
-		size := browserDownloadSize(status)
-		if status.Bundled {
-			fmt.Fprintln(a.IO.Out, "正在安装程序内置 Chromium，完成后会校验 SHA-256。")
-		} else {
-			fmt.Fprintf(a.IO.Out, "Chromium 下载%s，完成后会校验 SHA-256。\n", size)
+		if status.Source == music2bb.BrowserSourceSystem && status.Installed {
+			status, err := a.Browser.Install(ctx, false)
+			if err != nil {
+				fmt.Fprintf(a.IO.Err, "浏览器检查失败: %v\n", err)
+				return ExitExtraction
+			}
+			fmt.Fprintf(a.IO.Out, "installed\tsource=%s\t%s\tverified=%t\tpath=%s\n", status.Source, browserProvenance(status), status.Verified, status.ExecutablePath)
+			return ExitSuccess
 		}
+		size := browserDownloadSize(status)
+		fmt.Fprintf(a.IO.Out, "Chromium 下载%s，完成后会校验 SHA-256。\n", size)
 		if a.IO.Interactive {
 			prompt := fmt.Sprintf("将下载经过校验的 Chromium（%s），继续? [y/N] ", size)
-			if status.Bundled {
-				prompt = "将安装程序内置的 Chromium，继续? [y/N] "
-			}
 			answer, _ := a.ask(prompt)
 			allow = strings.EqualFold(answer, "y")
 		}
@@ -180,7 +178,7 @@ func (a *App) runBrowser(ctx context.Context, args []string) int {
 			fmt.Fprintf(a.IO.Err, "浏览器安装失败: %v\n", err)
 			return ExitExtraction
 		}
-		fmt.Fprintf(a.IO.Out, "installed\t%s\tverified=%t\tpath=%s\n", browserProvenance(status), status.Verified, status.ExecutablePath)
+		fmt.Fprintf(a.IO.Out, "installed\tsource=%s\t%s\tverified=%t\tpath=%s\n", status.Source, browserProvenance(status), status.Verified, status.ExecutablePath)
 		return ExitSuccess
 	case "clear":
 		if err := a.Browser.Clear(ctx); err != nil {

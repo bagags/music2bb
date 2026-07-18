@@ -19,7 +19,7 @@ A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 License: https://github.com/bagags/music2bb-go/blob/main/LICENSE.md
 Source: https://github.com/bagags/music2bb-go
 
-Release packages that embed Chromium include THIRD_PARTY_NOTICES.md,
+Release packages do not embed Chromium. They include THIRD_PARTY_NOTICES.md,
 CHROMIUM_CREDITS.html, CHROMIUM_PROVENANCE.md, and CHROMIUM_PROVENANCE.json.
 Chromium source and license: https://chromium.googlesource.com/chromium/src/
 `
