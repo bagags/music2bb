@@ -28,7 +28,7 @@
 
 ## 安装
 
-从 [GitHub Releases](https://github.com/bagags/music2bb-go/releases) 下载与平台对应的压缩包，并使用随附的 `.sha256` 文件校验。压缩包包含已集成对应平台 Chromium 的单文件程序、GPLv3 许可证、非官方与无隶属关系声明、第三方软件声明、经来源差异审计并校验哈希的完整 Chromium credits、精确来源记录和对应源码信息。也可以直接安装当前源码：
+从 [GitHub Releases](https://github.com/bagags/music2bb-go/releases) 下载与平台对应的压缩包，并使用随附的 `.sha256` 文件校验。压缩包包含不内置浏览器的单文件程序、GPLv3 许可证、非官方与无隶属关系声明、第三方软件声明、完整 Chromium credits、精确来源记录和对应源码信息。也可以直接安装当前源码：
 
 ```bash
 go install github.com/bagags/music2bb-go/cmd/music2bb@latest
@@ -42,7 +42,7 @@ cd music2bb
 go build -trimpath -o music2bb ./cmd/music2bb
 ```
 
-支持的发布目标：macOS ARM64、macOS AMD64、Windows AMD64、Windows ARM64。
+支持的发布目标：macOS ARM64/AMD64、Windows ARM64/AMD64、Linux ARM64/AMD64。所有目标都使用 `CGO_ENABLED=0` 构建，编译和打包时不会下载或嵌入 Chromium。
 
 ## 使用
 
@@ -109,6 +109,7 @@ music2bb convert '<playlist-url>' --top-k 5 --manual-review
 | `--favorite` | — | 收藏夹 ID 或完整名称 |
 | `--yes` | `false` | 跳过最终写入确认 |
 | `--browser` | `auto` | `auto`、`never` 或 `always` |
+| `--browser-executable` | 自动发现 | 指定 Chromium 或 Google Chrome 可执行文件；优先于环境变量和自动发现 |
 | `--manual-review` | `false` | 审核自动匹配候选 |
 | `--manual` | `false` | 完全手动选择 |
 | `--no-tui` | `false` | 强制使用无 ANSI、按歌单顺序输出的引导式文本界面 |
@@ -156,10 +157,12 @@ music2bb cache clear --all
 | `--browser` | 处理方式 |
 |---|---|
 | `never` | 只运行来源优化；未知或无对应优化的来源返回提取错误，不启动或安装 Chromium |
-| `auto` | 先运行来源优化；结果为空或不完整时自动准备并启动已注入、已安装或发布版内置的 Chromium，同时输出切换通知 |
-| `always` | 预先确保已注入、已安装或发布版内置的 Chromium 可用，仍先运行来源优化，并仅在结果为空或不完整时启动浏览器 |
+| `auto` | 先运行来源优化；结果为空或不完整时准备并启动已注入、系统或托管 Chromium，同时输出切换通知 |
+| `always` | 预先确保已注入、系统或托管 Chromium 可用，仍先运行来源优化，并仅在结果为空或不完整时启动浏览器 |
 
-正式发布构建把目标平台的固定 Chromium 归档嵌入程序。HTTP 解析失败或结果不完整时，后端会自动校验并解压该归档、输出切换通知，然后用 Chromium 重试；整个自动回退过程不会弹出确认提示。普通 `go build` 或 `go install` 构建不携带该大体积归档，CLI 会在首次需要回退时通知用户并自动下载、校验、安装后重试，同样不询问确认。`--browser never` 始终禁止这些行为。
+浏览器选择顺序在所有平台一致：`BrowserOptions.ExecutablePath`/`--browser-executable`、`MUSIC2BB_BROWSER_EXECUTABLE`、PATH 与常规安装目录中的 Chromium 或 Google Chrome、已经校验的托管副本，最后才是固定归档的下载、校验和安装。不会选择 Edge。显式路径无效时立即失败；自动发现不到系统浏览器时才进入托管路径。系统浏览器会显示为 `source=system`、可用但未经项目校验，并使 `browser install` 成为无下载的成功操作。托管浏览器显示为 `source=managed`，只有归档和可执行文件校验通过才可用。`browser clear` 只删除托管缓存。
+
+HTTP 解析失败或结果不完整且没有系统浏览器时，CLI 会通知用户并自动下载、校验、安装固定归档后重试，不弹出确认；显式执行 `browser install` 时仍会在交互终端确认可能发生的下载。`--browser never` 始终禁止浏览器回退。
 
 ```bash
 music2bb browser status
@@ -167,7 +170,7 @@ music2bb browser install
 music2bb browser clear
 ```
 
-浏览器版本、源码提交、快照修订、对象 generation、发布时间、归档大小和各平台 SHA-256 固定在程序内，也记录在 [`CHROMIUM_PROVENANCE.md`](CHROMIUM_PROVENANCE.md) 中。Chromium 各平台构建异步发布，所以当前记录中 macOS/Linux 已是 `152.0.7951.0`，Windows 的最新可用构建仍是 `152.0.7950.0`，而且每个平台可能对应相邻但不同的源码提交。无论归档来自发布版内置数据还是自动下载，只有 SHA-256 校验通过后才会解压；运行时只接受已记录并重新校验过的可执行文件。`browser status` 会显示准确版本、修订和完整提交哈希。显式执行 `browser install` 时仍会在交互终端确认可能发生的下载。
+浏览器版本、源码提交、快照修订、对象 generation、发布时间、归档大小、来源和各平台 SHA-256 固定在程序内，也记录在 [`CHROMIUM_PROVENANCE.md`](CHROMIUM_PROVENANCE.md) 中。macOS、Windows 和 Linux AMD64 的五个托管归档直接使用 generation-pinned 官方 Chromium snapshots；Linux ARM64 使用相同 Linux 源码提交的项目构建归档。浏览器 pin 与 music2bb 版本独立，多个 CLI 版本可复用同一套经审计归档。只有 SHA-256 校验通过后才会解压；运行时只接受已记录并重新校验过的托管可执行文件。
 
 ## 配置与迁移
 
@@ -175,8 +178,9 @@ music2bb browser clear
 
 - macOS：`~/Library/Application Support/music2bb`
 - Windows：`%AppData%\music2bb`
+- Linux：`$XDG_CONFIG_HOME/music2bb`，未设置时为 `~/.config/music2bb`
 
-首次浏览器回退后，解压的浏览器文件位于对应的系统缓存目录，不在配置目录中；发布二进制还包含用于首次安装的压缩归档。
+首次托管浏览器回退后，解压文件位于系统缓存目录，不在配置目录或发布包中。Linux 使用 `$XDG_CACHE_HOME/music2bb/browser`，未设置时通常为 `~/.cache/music2bb/browser`。托管下载约 170–345 MB，解压后需要更多空间。
 
 可选覆盖文件：
 
@@ -262,7 +266,7 @@ go test -count=1 -tags=authenticated ./internal/bilibili \
   -run TestAuthenticatedFavoriteLifecycleCanary -v
 ```
 
-CI 运行单元、fixture、race、vet、标签编译、集成目标平台 Chromium 的平台构建，以及发布平台的真实浏览器安装、启动和受控提取。CI 还会校验完整 Chromium credits 的固定哈希、项目数量和必需许可文本，并拒绝 Chromium snapshot 自带的示例 credits。`v*` 标签会发布包含内置 Chromium、许可证、第三方软件声明、完整 Chromium credits、精确来源记录和对应源码信息的版本化压缩包及其 SHA-256 文件。
+CI 运行单元、fixture、race、vet、标签编译、六个平台的无浏览器交叉构建，以及六个原生 runner 上的托管浏览器安装、启动和受控提取。Linux ARM64 的独立手动工作流固定源码、`depot_tools`、GN 参数和归档配方，在 `ubuntu-24.04-arm` 冒烟测试后发布独立浏览器 release、校验和、构建元数据和 artifact attestation。`v*` 标签只发布 music2bb 可执行文件、许可证、第三方软件声明、完整 Chromium credits、来源记录和 SHA-256；发布包不含 Chromium 二进制或归档。
 
 ## 许可证
 
@@ -283,6 +287,6 @@ A PARTICULAR PURPOSE. See the GNU General Public License for more details.
 You should have received a copy of the GNU General Public License along with
 music2bb. If not, see <https://www.gnu.org/licenses/>.
 
-发布包所含依赖项及内置 Chromium 的版权与许可证声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+发布包所含依赖项及运行时 Chromium 的版权与许可证声明见 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 项目的非官方身份、无隶属关系、音视频媒体处理边界、商标归属和用户责任声明见 [`DISCLAIMER.md`](DISCLAIMER.md)。
 运行 `music2bb license` 可在终端查看项目版权、无担保声明、许可证和源码地址。

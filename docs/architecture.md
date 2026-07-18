@@ -53,7 +53,7 @@ consumers outside this module.
 | `internal/kugou` | Browser-free Kugou protocol optimization, response parsing, and song cleanup |
 | `internal/applemusic` | Browser-free Apple Music share-page identification and `serialized-server-data` playlist/album extraction |
 | `internal/bilibili` | Authentication, search, WBI signing, cookies, and favorite operations |
-| `internal/browser` | Bundled/downloaded Chromium verification, lazy installation, and provider-neutral dynamic-page candidate extraction |
+| `internal/browser` | System-browser discovery, managed Chromium verification, lazy installation, and provider-neutral dynamic-page candidate extraction |
 | `internal/config` | State paths, embedded matcher defaults, and one-time legacy-state migration |
 | `internal/netx` | Shared HTTP retry, concurrency, and rate-limit behavior |
 
@@ -199,29 +199,34 @@ implicitly attached to every provider.
 | Policy | Processing |
 |---|---|
 | `never` | Run registered provider playlist optimizations only. An unoptimized provider returns an extraction error without launching or installing Chromium. |
-| `auto` | Run provider optimizations, then lazily provision the bundled browser and notify before Chromium fallback for an empty or incomplete result. Preserve useful partial songs if the browser is unavailable or fallback fails. |
-| `always` | Require an injected, verified installed, or bundled browser before processing. Still run provider optimizations first and launch Chromium only for an empty or incomplete result. |
+| `auto` | Run provider optimizations, then use the selected system or managed browser and notify before Chromium fallback for an empty or incomplete result. Preserve useful partial songs if the browser is unavailable or fallback fails. |
+| `always` | Require an injected, discovered system, or verified managed browser before processing. Still run provider optimizations first and launch Chromium only for an empty or incomplete result. |
 
-Release builds compile the pinned target-platform Chromium archive into the Go
-binary behind the `bundled_chromium` build tag. Each platform has independent
-version, source commit, snapshot revision, object generation, publication time,
-archive size, and SHA-256 provenance in the embedded schema-2 manifest. The
-archive is verified against that manifest and lazily extracted into the managed
-cache only when it is required. The install record binds the verified executable
-to the same Chromium version and commit, so a stale cache cannot satisfy a new
-manifest. This provisioning path performs no network access and prompts for no
-approval. If an ordinary source build has no bundled archive, the CLI owns a
-final automatic download, install, and retry path and notifies instead of
-prompting. `never` disables both paths.
+`BrowserOptions.ExecutablePath`, `MUSIC2BB_BROWSER_EXECUTABLE`, and automatic
+PATH/conventional-location discovery are resolved before the managed cache.
+Only Chromium and Google Chrome are candidates. An explicit invalid path fails
+construction; discovery failure is non-fatal. System browsers are available but
+not project-verified. If none exists, the embedded schema-3 manifest selects a
+managed artifact, whose install record binds the archive and executable hashes
+to the platform, version, revision, and source commit. A stale cache therefore
+cannot satisfy a new manifest. The CLI owns the automatic download, install,
+and retry path. `never` disables fallback, and clear removes only managed data.
 
-The release pipeline runs each target archive on its native architecture.
+Five manifest entries point directly at generation-pinned official Chromium
+snapshots. Linux ARM64 is built separately from the Linux AMD64 source commit by
+a pinned, self-hosted x64 builder recipe, smoke-tested on native Ubuntu 24.04
+ARM, attested, and published under an independent immutable browser release.
+All six music2bb release executables are browser-independent `CGO_ENABLED=0`
+builds. The deprecated public `Bundled` field is retained as false.
+
+The release pipeline runs each managed archive on its native architecture.
 Chromium snapshots intentionally build a sample-only `chrome://credits` page,
 so release packages instead use the checked-in complete credits artifact. Its
 official generated base, source-delta audit, supplemental entries, and SHA-256
 are recorded in the manifest and `CHROMIUM_PROVENANCE.md`; tests reject
 truncation, missing required notices, and the upstream sample page. Packages
 also include the Chromium BSD notice and both human- and machine-readable
-provenance records.
+provenance records even though the music2bb package contains no Chromium binary.
 Cancellation or deadline expiry always wins over partial success; other
 fallback errors are ignored when usable songs exist and are aggregated only
 when no songs can be returned. Malformed URLs, cancellation, extraction

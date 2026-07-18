@@ -133,9 +133,11 @@ date such litigation is filed.
 
 ## Chromium
 
-Platform release binaries embed an unmodified, checksum-pinned Chromium
-snapshot selected for the target platform: `152.0.7951.0` on macOS and Linux,
-and the newest available Windows build, `152.0.7950.0`, at the recorded cutoff.
+music2bb release binaries do not embed Chromium. At runtime, music2bb can use a
+user-selected or discovered system Chromium/Google Chrome, or download a
+checksum-pinned managed Chromium archive. Five managed archives come directly
+from official Chromium snapshot storage; Linux ARM64 is built from the exact
+Linux AMD64 source commit by the project's pinned, attested builder workflow.
 Exact commit, snapshot, archive, publication, and SHA-256 provenance is recorded in
 `CHROMIUM_PROVENANCE.md` and `CHROMIUM_PROVENANCE.json`. Chromium is Copyright
 2015 The Chromium Authors and is distributed under the following BSD-style
@@ -166,9 +168,9 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 
 Chromium also contains third-party components under their own licenses. Every
-music2bb release package that embeds Chromium includes the complete
+music2bb release package includes the complete
 `CHROMIUM_CREDITS.html` generated from Chromium's shipped-component license
-metadata and audited through the newest embedded source revision. Snapshot
+metadata and audited through the newest managed source revision. Snapshot
 builds contain only Chromium's sample `chrome://credits` resource, so that
 placeholder is not used as the release notice. The credits file's exact source,
 delta audit, and SHA-256 are recorded in `CHROMIUM_PROVENANCE.md` and

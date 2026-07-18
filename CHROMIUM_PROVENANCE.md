@@ -1,12 +1,13 @@
 # Chromium Provenance
 
-music2bb release binaries redistribute an unmodified Chromium snapshot for the
-target platform. The archive is embedded byte-for-byte and is verified before
-both compilation and extraction. This record was resolved from Chromium's
-official snapshot service on 2026-07-14 at 15:02:53 UTC.
+music2bb release binaries do not contain Chromium. At runtime they prefer an
+explicitly selected or discovered system Chromium/Google Chrome and otherwise
+download a platform-pinned managed archive. Managed archives are verified before
+extraction, and their executables are reverified before launch. This record was
+resolved from Chromium's official snapshot service on 2026-07-14 at 15:02:53 UTC.
 
 Chromium's builders publish different commit positions asynchronously for each
-platform. The five archives below were the newest objects advertised by each
+platform. The five upstream archives below were the newest objects advertised by each
 platform's official `LAST_CHANGE` endpoint at resolution time. macOS and Linux
 had advanced to Chromium `152.0.7951.0`; the newest Windows builders still
 reported `152.0.7950.0`. Versions come from `chrome/VERSION` at each exact
@@ -72,8 +73,7 @@ source commit.
 
 ### Linux amd64
 
-This archive is downloaded by source builds on Linux; current release bundles
-do not embed it.
+This archive is downloaded at runtime on Linux; release packages do not embed it.
 
 - Version: `152.0.7951.0`
 - Commit position: `refs/heads/main@{#1661846}`
@@ -87,9 +87,36 @@ do not embed it.
 - Source: <https://chromium.googlesource.com/chromium/src/+/24394684caab9de1b7f4a3a2f83636e3d1449b56>
 - License: <https://chromium.googlesource.com/chromium/src/+/24394684caab9de1b7f4a3a2f83636e3d1449b56/LICENSE>
 
+### Linux arm64
+
+Linux ARM64 has no current official desktop snapshot in the upstream set. The
+project builder uses the Linux AMD64 pin's exact Chromium version, revision, and
+source commit, a pinned `depot_tools` commit, fixed GN arguments, and a
+deterministic `chrome-linux/` ZIP recipe. It generates the Chromium BSD license,
+complete third-party credits, and build metadata from that checkout, smoke-tests
+the archive on `ubuntu-24.04-arm`, and publishes checksum and GitHub artifact
+attestation assets under `chromium-152.0.7951.0-r1661846` without overwriting an
+existing release.
+
+- Origin: project build (publication pending)
+- Version: `152.0.7951.0`
+- Commit position: `refs/heads/main@{#1661846}`
+- Chromium commit: `24394684caab9de1b7f4a3a2f83636e3d1449b56`
+- `depot_tools` commit: `1709e20d5ca2afe97bfa726168719c3b77eb9883`
+- Planned archive: <https://github.com/bagags/music2bb-go/releases/download/chromium-152.0.7951.0-r1661846/chromium-linux-arm64.zip>
+- Source: <https://chromium.googlesource.com/chromium/src/+/24394684caab9de1b7f4a3a2f83636e3d1449b56>
+- License: <https://chromium.googlesource.com/chromium/src/+/24394684caab9de1b7f4a3a2f83636e3d1449b56/LICENSE>
+- Build recipe: [`.github/workflows/chromium-linux-arm64.yml`](.github/workflows/chromium-linux-arm64.yml)
+
+The embedded manifest marks this artifact `pending-build` until the workflow has
+published the immutable asset and its actual SHA-256, size, publication time,
+builder run, and attestation URLs have replaced the pending fields. A music2bb
+release is blocked while any target remains pending.
+
 ## Release compliance files
 
-Every release package containing embedded Chromium also contains:
+Every music2bb release package contains these transparency files even though it
+contains no Chromium binary or archive:
 
 - `THIRD_PARTY_NOTICES.md`, including Chromium's BSD license notice;
 - `CHROMIUM_CREDITS.html`, the complete, checksum-pinned Chromium third-party
@@ -120,7 +147,7 @@ build that had complete credits at resolution time:
 
 Chromium generates that resource with `tools/licenses/licenses.py` from
 dependencies marked `Shipped: yes`. The source delta from main revision
-`1661480` through the newest embedded revision `1661846` was then audited for
+`1661480` through the newest managed revision `1661846` was then audited for
 `README.chromium`, license, notice, and dependency changes. Existing shipped
 entries changed only revision or download URL. Root license texts for every
 rolled shipped source dependency were compared at both ends and were
